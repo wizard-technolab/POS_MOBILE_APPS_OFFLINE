@@ -1,1 +1,0 @@
-# POS Mobile Apps Offline

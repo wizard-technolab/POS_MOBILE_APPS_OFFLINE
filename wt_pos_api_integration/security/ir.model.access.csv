@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+wt_pos_api_integration.access_device_branch,access_device_branch,wt_pos_api_integration.model_device_branch,base.group_user,1,1,1,1
+wt_pos_api_integration.access_device_device,access_device_device,wt_pos_api_integration.model_device_device,base.group_user,1,1,1,1
+wt_pos_api_integration.access_sync_log,access_sync_log,wt_pos_api_integration.model_sync_log,base.group_user,1,1,1,1
+wt_pos_api_integration.access_jwt_config_admin,jwt.config admin,model_jwt_config,base.group_system,1,1,1,1
+wt_pos_api_integration.access_jwt_config_user,jwt.config user,model_jwt_config,base.group_user,1,1,1,1
