@@ -39,6 +39,11 @@ class CustomerAPI(http.Controller):
 
         auth_header_data = request.httprequest.headers.get('Authorization', '')
         if not auth_header_data.startswith('Bearer '):
+            _logger.warning(
+                'Missing or invalid Authorization header for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
             return None, self._json_response(
                 status="error",
                 message=(
@@ -55,11 +60,22 @@ class CustomerAPI(http.Controller):
             payload_data = pyjwt.decode(token, secret, algorithms=['HS256'])
 
         except pyjwt.ExpiredSignatureError:
+            _logger.warning(
+                'Expired JWT token used for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
             return None, self._json_response(
                 status="error", message="Token expired", code=401,
             )
 
-        except pyjwt.InvalidTokenError:
+        except pyjwt.InvalidTokenError as exc:
+            _logger.warning(
+                'Invalid JWT token for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
             return None, self._json_response(
                 status="error", message="Invalid token", code=401,
             )
@@ -74,6 +90,26 @@ class CustomerAPI(http.Controller):
         if not user_id_data:
             return None, self._json_response(
                 status="error", message="Invalid token payload", code=401,
+            )
+
+        user = request.env['res.users'].sudo().browse(user_id_data)
+        if not user.exists():
+            _logger.warning(
+                'JWT token references missing user %s for %s from IP: %s',
+                user_id_data,
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
+            return None, self._json_response(
+                status="error", message="User not found", code=401,
+            )
+
+        try:
+            request.update_env(user=user)
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.exception("Failed to switch request env for JWT user: %s", exc)
+            return None, self._json_response(
+                status="error", message="Failed to establish user context", code=500,
             )
 
         return payload_data, None
@@ -310,7 +346,7 @@ class CustomerAPI(http.Controller):
     #   4. If credit_limit == 0 → no limit, no warning needed.
     # ──────────────────────────────────────────────────────────
     @http.route('/api/customer/<int:customer_id>/credit',
-                type='http', auth='none', methods=['GET'], csrf=False)
+                type='http', auth='public', methods=['GET'], csrf=False)
     def get_customer_credit(self, customer_id, **kwargs):
         """Return credit status for a single customer."""
 

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Authentication controller for JWT-based API."""
+"""Authentication controller for JWT-based API with token expiration."""
 
 # Standard library
 import json
 import logging
+from datetime import datetime, timedelta
 
 # Odoo
 from odoo import http
@@ -15,6 +16,9 @@ import jwt
 
 _logger = logging.getLogger(__name__)
 
+TOKEN_EXPIRY_HOURS = 24
+TOKEN_EXPIRY_SECONDS = TOKEN_EXPIRY_HOURS * 60 * 60
+
 
 def _json_response(data: dict, status: int = 200) -> Response:
     """Return JSON HTTP response."""
@@ -25,13 +29,20 @@ def _json_response(data: dict, status: int = 200) -> Response:
     )
 
 
-def _build_token(user_id: int, email: str, secret: str) -> str:
-    """Generate JWT token."""
+def _build_token(user_id: int, email: str, secret: str,
+                 expires_in_hours: int = TOKEN_EXPIRY_HOURS) -> str:
+    """Generate JWT token with a backwards-compatible 24-hour expiration."""
+    now = datetime.utcnow()
     payload_data = {
         'user_id': user_id,
         'email': email,
+        'iat': now,
+        'exp': now + timedelta(hours=expires_in_hours),
     }
-    return jwt.encode(payload_data, secret, algorithm='HS256')
+    token = jwt.encode(payload_data, secret, algorithm='HS256')
+    if isinstance(token, bytes):
+        token = token.decode('utf-8')
+    return token
 
 
 class AuthController(http.Controller):
@@ -45,7 +56,7 @@ class AuthController(http.Controller):
         csrf=False,
     )
     def authenticate(self, **_kwargs):  # renamed to avoid unused warning
-        """Authenticate user and return JWT token."""
+        """Authenticate user and return a JWT access token."""
 
         try:
             body_data = json.loads(request.httprequest.data or '{}')
@@ -71,12 +82,18 @@ class AuthController(http.Controller):
                 'password': password,
             }
 
-            auth_info = request.env['res.users'].sudo().authenticate(  
+            auth_info = request.env['res.users'].sudo().authenticate(
                 credential_data,
                 {'interactive': False},
-            ) 
+            )
 
         except AccessDenied:
+            # Log failed login attempt for security monitoring
+            _logger.warning(
+                'Failed authentication attempt for email %s from IP %s',
+                email,
+                request.httprequest.remote_addr,
+            )
             return _json_response(
                 {'status': 'error', 'message': 'Invalid credentials'},
                 status=401,
@@ -103,7 +120,12 @@ class AuthController(http.Controller):
 
         try:
             secret = request.env['jwt.config'].sudo().get_secret_key()
-            token = _build_token(user_id_data, user_email, secret)
+            token = _build_token(
+                user_id_data,
+                user_email,
+                secret,
+                expires_in_hours=TOKEN_EXPIRY_HOURS,
+            )
 
         except Exception as exc:  # pylint: disable=broad-except
             _logger.exception('Token generation failed: %s', exc)
@@ -112,9 +134,17 @@ class AuthController(http.Controller):
                 status=500,
             )
 
+        _logger.info(
+            'Successful authentication for user %s (ID: %s) from IP %s',
+            email,
+            user_id_data,
+            request.httprequest.remote_addr,
+        )
+
         return _json_response({
             'status': 'success',
             'token': token,
             'user_id': user_id_data,
             'email': user_email,
+            'expires_in': TOKEN_EXPIRY_SECONDS,
         })

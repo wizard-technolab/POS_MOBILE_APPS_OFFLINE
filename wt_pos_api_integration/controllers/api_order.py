@@ -17,8 +17,11 @@
 
 import json
 import jwt
+import logging
 from odoo import http
 from odoo.http import request
+
+_logger = logging.getLogger(__name__)
 
 
 class PosApiController(http.Controller):
@@ -41,41 +44,97 @@ class PosApiController(http.Controller):
 
     # ──────────────────────────────────────────────────────────
     # HELPER: Validate JWT Bearer token
+    # 
+    # SECURITY NOTES:
+    #   - Checks Authorization header for "Bearer <token>"
+    #   - Validates token signature with JWT secret
+    #   - Updates Odoo environment to authenticated user
+    #   - Logs failures for security monitoring
     # ──────────────────────────────────────────────────────────
     def _validate_token(self):
         """
         Read the Authorization header, decode the JWT,
         and switch the Odoo env to that user.
+        
+        Returns:
+            True if token is valid and user exists
+            False otherwise
         """
         auth = request.httprequest.headers.get('Authorization', '')
+        
         if not auth.startswith('Bearer '):
+            _logger.warning(
+                'Missing or invalid Authorization header from IP: %s for endpoint: %s',
+                request.httprequest.remote_addr,
+                request.httprequest.path,
+            )
             return False
+        
         token = auth[7:]
+        
         try:
             secret = request.env['jwt.config'].sudo().get_secret_key()
             payload = jwt.decode(token, secret, algorithms=['HS256'])
             user_id = payload.get('user_id')
             user = request.env['res.users'].sudo().browse(user_id)
+            
             if not user.exists():
+                _logger.warning(
+                    'JWT token with invalid user_id (%s) for %s from IP: %s',
+                    user_id,
+                    request.httprequest.path,
+                    request.httprequest.remote_addr,
+                )
                 return False
+            
             request.update_env(user=user)
             return True
+            
         except jwt.ExpiredSignatureError:
+            _logger.warning(
+                'Expired JWT token used for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
             return False
-        except jwt.InvalidTokenError:
+        except jwt.InvalidTokenError as exc:
+            _logger.warning(
+                'Invalid JWT token for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
+            return False
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.exception(
+                'JWT validation error for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
             return False
 
     # ──────────────────────────────────────────────────────────
     # HELPER: Write a sync log entry
     # ──────────────────────────────────────────────────────────
     def _log(self, payload, response, status):
-        request.env['sync.log'].sudo().create({
-            'endpoint': request.httprequest.path,
-            'method':   request.httprequest.method,
-            'payload':  json.dumps(payload, indent=4),
-            'response': json.dumps(response, indent=4),
-            'status':   status,
-        })
+        """Write a sync log entry without interrupting the API flow."""
+        try:
+            safe_payload = payload if isinstance(payload, dict) else {}
+            safe_payload = dict(safe_payload)
+            for key in ('password', 'token', 'access_token', 'refresh_token'):
+                if key in safe_payload:
+                    safe_payload[key] = '***REDACTED***'
+
+            request.env['sync.log'].sudo().create({
+                'endpoint': request.httprequest.path,
+                'method':   request.httprequest.method,
+                'payload':  json.dumps(safe_payload, indent=4),
+                'response': json.dumps(response, indent=4),
+                'status':   status,
+            })
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.error('Failed to write sync log: %s', exc)
 
     # ──────────────────────────────────────────────────────────
     # HELPER: Resolve product_id to a product.product record
@@ -84,6 +143,7 @@ class PosApiController(http.Controller):
     # product.template id. We handle both cases.
     # ──────────────────────────────────────────────────────────
     def _resolve_product(self, product_id):
+        """Resolve product from ID (handles both product and template)."""
         # First: try as product.product (variant)
         product = request.env['product.product'].sudo().browse(product_id)
         if product.exists():
@@ -123,6 +183,14 @@ class PosApiController(http.Controller):
 
         if not session.exists():
             return None, f'POS Session {session_id} does not exist.'
+            
+        # Security Check: Ensure the user calling the API is allowed to use this session.
+        # Usually, this means the user is the one who opened it or is a POS manager.
+        current_user = request.env.user
+        if session.user_id != current_user and not current_user.has_group('point_of_sale.group_pos_manager'):
+            return None, (
+                f'Unauthorized: User {current_user.name} does not have access to Session "{session.name}".'
+            )
 
         if session.state != 'opened':
             return None, (
@@ -154,7 +222,7 @@ class PosApiController(http.Controller):
     #   ]
     # }
     # ──────────────────────────────────────────────────────────
-    @http.route('/api/order', type='http', auth='none',
+    @http.route('/api/order', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def create_order(self):
 
@@ -422,7 +490,7 @@ class PosApiController(http.Controller):
     # ──────────────────────────────────────────────────────────
     # GET /api/orders
     # ──────────────────────────────────────────────────────────
-    @http.route('/api/orders', type='http', auth='none',
+    @http.route('/api/orders', type='http', auth='public',
                 methods=['GET'], csrf=False)
     def get_orders(self, **kwargs):
         if not self._validate_token():
@@ -616,7 +684,7 @@ class PosApiController(http.Controller):
     #   session_id  (optional) — filter by POS session
     #   limit       (optional, default 50, max 200)
     # ──────────────────────────────────────────────────────────────────────────
-    @http.route('/api/orders/pending', type='http', auth='none',
+    @http.route('/api/orders/pending', type='http', auth='public',
                 methods=['GET'], csrf=False)
     def get_pending_orders(self, **kwargs):
         """
@@ -754,7 +822,7 @@ class PosApiController(http.Controller):
     #   ]
     # }
     # ──────────────────────────────────────────────────────────
-    @http.route('/api/order/cancel', type='http', auth='none',
+    @http.route('/api/order/cancel', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def cancel_order(self):
 
@@ -917,7 +985,7 @@ class PosApiController(http.Controller):
     # GET /api/order/<order_id>/lines
     # ──────────────────────────────────────────────────────────
     @http.route('/api/order/<int:order_id>/lines', type='http',
-                auth='none', methods=['GET'], csrf=False)
+                auth='public', methods=['GET'], csrf=False)
     def get_order_lines(self, order_id, **kwargs):
         if not self._validate_token():
             return self._json_response(
@@ -1031,7 +1099,7 @@ class PosApiController(http.Controller):
     # Response:
     # { "status": "success", "data": { "order_id": 123, "state": "cancel" } }
     # ──────────────────────────────────────────────────────────────────────────
-    @http.route('/api/order/<int:order_id>/cancel', type='http', auth='none',
+    @http.route('/api/order/<int:order_id>/cancel', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def cancel_order_by_id(self, order_id):
 
@@ -1125,7 +1193,7 @@ class PosApiController(http.Controller):
     #   "lines": [ { "product_id": 45, "qty": 2, "price": 150.0, ... } ]
     # }
     # ──────────────────────────────────────────────────────────────────────────
-    @http.route('/api/order/<int:order_id>/draft', type='http', auth='none',
+    @http.route('/api/order/<int:order_id>/draft', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def update_draft_order_by_id(self, order_id):
 
@@ -1271,7 +1339,7 @@ class PosApiController(http.Controller):
     #   "message": "Draft order saved."
     # }
     # ──────────────────────────────────────────────────────────────────────────
-    @http.route('/api/order/draft', type='http', auth='none',
+    @http.route('/api/order/draft', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def save_draft_order(self):
 
@@ -1467,6 +1535,9 @@ class PosApiController(http.Controller):
             # Use the naming logic defined in the model override
             order.sudo().write({'name': order._compute_order_name(session)})
             
+            # Update local variable to reflect new name
+            action_msg = 'Draft order updated.'
+            
             # Update message to reflect this was an update
             action_msg = 'Draft order updated.'
 
@@ -1526,7 +1597,7 @@ class PosApiController(http.Controller):
     #   "message": "Order paid successfully."
     # }
     # ──────────────────────────────────────────────────────────────────────────
-    @http.route('/api/order/<int:order_id>/pay', type='http', auth='none',
+    @http.route('/api/order/<int:order_id>/pay', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def pay_draft_order(self, order_id):
 

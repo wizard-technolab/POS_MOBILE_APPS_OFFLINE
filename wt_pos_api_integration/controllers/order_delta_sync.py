@@ -16,9 +16,12 @@
 
 import json
 import jwt
+import logging
 from datetime import datetime
 from odoo import http
 from odoo.http import request
+
+_logger = logging.getLogger(__name__)
 
 
 class OrderDeltaSyncController(http.Controller):
@@ -27,21 +30,57 @@ class OrderDeltaSyncController(http.Controller):
     # HELPER: Validate JWT Bearer token
     # ──────────────────────────────────────────────────────
     def _validate_token(self):
-        """Validate JWT token from Authorization header"""
+        """Validate the JWT Bearer token and switch request env to that user."""
         auth = request.httprequest.headers.get('Authorization', '')
         if not auth.startswith('Bearer '):
+            _logger.warning(
+                'Missing or invalid Authorization header for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
             return False
+
         token = auth[7:]
         try:
             secret = request.env['jwt.config'].sudo().get_secret_key()
             payload = jwt.decode(token, secret, algorithms=['HS256'])
             user_id = payload.get('user_id')
             user = request.env['res.users'].sudo().browse(user_id)
+
             if not user.exists():
+                _logger.warning(
+                    'JWT token with invalid user_id (%s) for %s from IP: %s',
+                    user_id,
+                    request.httprequest.path,
+                    request.httprequest.remote_addr,
+                )
                 return False
+
             request.update_env(user=user)
             return True
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+
+        except jwt.ExpiredSignatureError:
+            _logger.warning(
+                'Expired JWT token used for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
+            return False
+        except jwt.InvalidTokenError as exc:
+            _logger.warning(
+                'Invalid JWT token for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
+            return False
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.exception(
+                'JWT validation error for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
             return False
 
     # ──────────────────────────────────────────────────────

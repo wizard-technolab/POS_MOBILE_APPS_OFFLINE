@@ -28,8 +28,11 @@
 
 import json
 import jwt
+import logging
 from odoo import http
 from odoo.http import request
+
+_logger = logging.getLogger(__name__)
 
 
 class SplitOrderApiController(http.Controller):
@@ -55,36 +58,80 @@ class SplitOrderApiController(http.Controller):
     # Exact same logic as api_order.py — reused for consistency.
     # ─────────────────────────────────────────────────────────────────────────
     def _validate_token(self):
+        """Validate the JWT Bearer token and switch request env to that user."""
         auth = request.httprequest.headers.get('Authorization', '')
         if not auth.startswith('Bearer '):
+            _logger.warning(
+                'Missing or invalid Authorization header for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
             return False
+
         token = auth[7:]
         try:
             secret = request.env['jwt.config'].sudo().get_secret_key()
             payload = jwt.decode(token, secret, algorithms=['HS256'])
             user_id = payload.get('user_id')
             user = request.env['res.users'].sudo().browse(user_id)
+
             if not user.exists():
+                _logger.warning(
+                    'JWT token with invalid user_id (%s) for %s from IP: %s',
+                    user_id,
+                    request.httprequest.path,
+                    request.httprequest.remote_addr,
+                )
                 return False
+
             request.update_env(user=user)
             return True
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+
+        except jwt.ExpiredSignatureError:
+            _logger.warning(
+                'Expired JWT token used for %s from IP: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+            )
+            return False
+        except jwt.InvalidTokenError as exc:
+            _logger.warning(
+                'Invalid JWT token for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
+            return False
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.exception(
+                'JWT validation error for %s from IP: %s: %s',
+                request.httprequest.path,
+                request.httprequest.remote_addr,
+                exc,
+            )
             return False
 
     # ─────────────────────────────────────────────────────────────────────────
     # HELPER: Write a sync log entry for this API call
     # ─────────────────────────────────────────────────────────────────────────
     def _log(self, payload, response, status):
+        """Write a sync log entry without interrupting the API flow."""
         try:
+            safe_payload = payload if isinstance(payload, dict) else {}
+            safe_payload = dict(safe_payload)
+            for key in ('password', 'token', 'access_token', 'refresh_token'):
+                if key in safe_payload:
+                    safe_payload[key] = '***REDACTED***'
+
             request.env['sync.log'].sudo().create({
                 'endpoint': request.httprequest.path,
                 'method':   request.httprequest.method,
-                'payload':  json.dumps(payload, indent=4),
+                'payload':  json.dumps(safe_payload, indent=4),
                 'response': json.dumps(response, indent=4),
                 'status':   status,
             })
-        except Exception:
-            pass  # Never break the main flow because of a logging error
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.error('Failed to write sync log: %s', exc)
 
     # ─────────────────────────────────────────────────────────────────────────
     # HELPER: Resolve product_id to a product.product record
@@ -142,7 +189,7 @@ class SplitOrderApiController(http.Controller):
     #   ]
     # }
     # ─────────────────────────────────────────────────────────────────────────
-    @http.route('/api/order/split', type='http', auth='none',
+    @http.route('/api/order/split', type='http', auth='public',
                 methods=['POST'], csrf=False)
     def create_split_order(self):
 
@@ -369,7 +416,7 @@ class SplitOrderApiController(http.Controller):
     # Fetch ALL sub-orders of a split group for the summary screen.
     # ─────────────────────────────────────────────────────────────────────────
     @http.route('/api/order/split/<string:split_group_id>', type='http',
-                auth='none', methods=['GET'], csrf=False)
+                auth='public', methods=['GET'], csrf=False)
     def get_split_orders(self, split_group_id, **kwargs):
 
         if not self._validate_token():
