@@ -288,42 +288,30 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = false);
 
     if (success) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const PosSessionScreen(),
-        ),
-      );
+      await _refreshSavedSubscriptionIfNeeded();
+
+      final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
+      final hasValidSubscription = await AppConfig.isSubscriptionValid();
+
+      if (isFirstLaunch || !hasValidSubscription) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const SubscriptionScreen(),
+          ),
+        );
+      } else {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const PosSessionScreen(),
+          ),
+        );
+      }
     } else {
       setState(() {
         _errorMsg =
             'Login failed. Check email, password, saved offline credentials, or internet.';
       });
     }
-    // if (success) {
-    //   await _refreshSavedSubscriptionIfNeeded();
-
-    //   final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
-    //   final hasValidSubscription = await AppConfig.isSubscriptionValid();
-
-    //   if (isFirstLaunch || !hasValidSubscription) {
-    //     Navigator.of(context).pushReplacement(
-    //       MaterialPageRoute(
-    //         builder: (_) => const SubscriptionScreen(),
-    //       ),
-    //     );
-    //   } else {
-    //     Navigator.of(context).pushReplacement(
-    //       MaterialPageRoute(
-    //         builder: (_) => const PosSessionScreen(),
-    //       ),
-    //     );
-    //   }
-    // } else {
-    //   setState(() {
-    //     _errorMsg =
-    //         'Login failed. Check email, password, saved offline credentials, or internet.';
-    //   });
-    // }
   }
 
   @override

@@ -85,16 +85,16 @@ class _AuthGateState extends State<AuthGate> {
 
     // ─── STEP 2: Check subscription (OFFLINE-CAPABLE) ───
     // This checks locally saved exp_date vs current device date
-    // final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
-    // final hasValidSubscription = await AppConfig.isSubscriptionValid();
+    final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
+    final hasValidSubscription = await AppConfig.isSubscriptionValid();
 
-    // if (isFirstLaunch || !hasValidSubscription) {
-    //   debugPrint(
-    //       '⚠️ First launch or expired subscription → SubscriptionScreen');
-    //   return const SubscriptionScreen();
-    // }
+    if (isFirstLaunch || !hasValidSubscription) {
+      debugPrint(
+          '⚠️ First launch or expired subscription → SubscriptionScreen');
+      return const SubscriptionScreen();
+    }
 
-    // debugPrint('✅ Subscription valid, checking session...');
+    debugPrint('✅ Subscription valid, checking session...');
 
     // ─── STEP 3: Check if POS session is selected ───
     final sessionId = await AppConfig.getPosSessionId();
