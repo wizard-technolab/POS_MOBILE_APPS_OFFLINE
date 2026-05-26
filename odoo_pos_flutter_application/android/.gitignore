@@ -5,9 +5,14 @@ gradle-wrapper.jar
 /gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
+.gradle/
+.kotlin/
+local.properties
+**/build/
 
-# Remember to never publicly share your keystore.
-# See https://flutter.dev/docs/deployment/android#reference-the-keystore-from-the-app
+# Android signing secrets. Commit only encrypted .gpg copies if needed.
 key.properties
-**/*.keystore
-**/*.jks
+keystore.properties
+app/key.jks
+app/*.jks
+app/*.keystore

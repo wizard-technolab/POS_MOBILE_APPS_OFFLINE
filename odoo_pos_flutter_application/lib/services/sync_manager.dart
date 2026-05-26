@@ -101,12 +101,13 @@ class SyncManager extends ChangeNotifier {
       return false;
     }
 
-    // Token already exists → continue
-    if (token.isNotEmpty) {
+    // Token already exists and has not expired → continue.
+    if (token.isNotEmpty && !AppConfig.isJwtExpired(token)) {
       return true;
     }
 
-    debugPrint('🔁 Token missing → attempting auto re-login...');
+    await AppConfig.clearApiToken();
+    debugPrint('🔁 Token missing/expired → attempting auto re-login...');
 
     try {
       final success = await OdooService.login(

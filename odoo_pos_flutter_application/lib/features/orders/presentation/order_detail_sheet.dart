@@ -84,7 +84,8 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
 
           // ✅ Cache fresh data for offline use
           if (lines.isNotEmpty) {
-            await lineRepo.saveOrderLines(localOrderId, lines);
+            await lineRepo.saveOrderLines(localOrderId, lines,
+                sessionId: currentSessionId);
           }
         } catch (e) {
           debugPrint('⚠️ Failed fetching from API: $e');
@@ -94,7 +95,9 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
 
       // 3️⃣ OFFLINE or API FAILED: Fall back to local cache
       if (lines.isEmpty) {
-        final localLines = await lineRepo.getOrderLines(localOrderId);
+        final currentSessionId = await AppConfig.getPosSessionId();
+        final localLines = await lineRepo.getOrderLines(localOrderId,
+            sessionId: currentSessionId);
 
         if (localLines.isNotEmpty) {
           lines = localLines;

@@ -6,10 +6,21 @@ import 'app_config.dart';
 
 class SubscriptionService {
   /// The static remote server that manages all global subscriptions.
-  static const String _licenseServerUrl =
-      'http://subscription.warlocktechnologies.com';
-  static const String _appSecretKey =
-      'd4f298c3e8e94172a52b88135c754688439810a9094772186934891275454621';
+  static const String _licenseServerUrl = String.fromEnvironment(
+    'WT_LICENSE_SERVER_URL',
+    defaultValue: 'https://synopses-wreckage-babied.ngrok-free.dev',
+  );
+
+  /// Do not commit subscription/HMAC secrets in source code.
+  /// Supply at build time:
+  /// --dart-define=WT_APP_SECRET_KEY=your_secret
+  ///
+  /// For backward-compatible deployments, AppConfig.getApiKey() is used as a
+  /// secure-storage fallback if this build-time value is empty.
+  static const String _appSecretKey = String.fromEnvironment(
+    'WT_APP_SECRET_KEY',
+    defaultValue: '',
+  );
 
   /// Validate license code against backend.
   /// Sends user email for ownership verification.
@@ -34,6 +45,17 @@ class SubscriptionService {
         print('🔍 Validating License: $cleanCode for Email: $cleanEmail');
       }
 
+      final appSecretKey = _appSecretKey.isNotEmpty
+          ? _appSecretKey
+          : await AppConfig.getApiKey();
+
+      if (appSecretKey.isEmpty) {
+        return {
+          'status': 'error',
+          'message': 'Subscription security key is not configured.',
+        };
+      }
+
       final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
       final Map<String, dynamic> payload = {
         'code': cleanCode,
@@ -42,7 +64,7 @@ class SubscriptionService {
       final String bodyString = jsonEncode(payload);
 
       // Generate HMAC signature: hash(secret, body + timestamp)
-      final hmac = Hmac(sha256, utf8.encode(_appSecretKey));
+      final hmac = Hmac(sha256, utf8.encode(appSecretKey));
       final digest = hmac.convert(utf8.encode(bodyString + timestamp));
       final signature = digest.toString();
 

@@ -5,6 +5,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'dart:convert';
 
+import 'local_crypto_service.dart';
+
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
   static Database? _database;
@@ -81,6 +83,7 @@ class DatabaseHelper {
       'price_subtotal_incl REAL DEFAULT 0.0',
       'image TEXT DEFAULT ""',
       'tax_rate REAL DEFAULT 18.0',
+      'session_id INTEGER DEFAULT 0',
     ];
 
     for (final col in columns) {
@@ -203,6 +206,7 @@ class DatabaseHelper {
       CREATE TABLE order_lines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_id INTEGER NOT NULL,
+        session_id INTEGER DEFAULT 0,
         product_id INTEGER NOT NULL,
         product_name TEXT DEFAULT '',
         quantity INTEGER DEFAULT 1,
@@ -266,18 +270,7 @@ class DatabaseHelper {
     ''');
 
     // Login credentials table
-    await db.execute('''
-      CREATE TABLE login_credentials (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        server_url TEXT,
-        db_name TEXT NOT NULL,
-        username TEXT NOT NULL,
-        password TEXT NOT NULL,
-        uid INTEGER,
-        created_at INTEGER,
-        updated_at INTEGER
-      )
-    ''');
+    await _createLoginCredentialsTable(db);
 
     await db.execute('''
       CREATE TABLE combo_cart_items (
@@ -348,19 +341,28 @@ class DatabaseHelper {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      await db.execute('''
-        CREATE TABLE IF NOT EXISTS login_credentials (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          server_url TEXT,
-          db_name TEXT NOT NULL,
-          username TEXT NOT NULL,
-          password TEXT NOT NULL,
-          uid INTEGER,
-          created_at INTEGER,
-          updated_at INTEGER
-        )
-      ''');
+      // Clean reset of local login credentials only. The app is not deployed yet,
+      // so we intentionally do not migrate legacy plain-text rows.
+      await db.execute('DROP TABLE IF EXISTS login_credentials');
+      await _createLoginCredentialsTable(db);
     }
+  }
+
+  Future<void> _createLoginCredentialsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS login_credentials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_url_enc TEXT NOT NULL,
+        db_name_enc TEXT NOT NULL,
+        username TEXT NOT NULL,
+        password_salt TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        password_iterations INTEGER NOT NULL,
+        uid INTEGER,
+        created_at INTEGER,
+        updated_at INTEGER
+      )
+    ''');
   }
 
   // ─────────────────────────────────────────────────────────
@@ -621,16 +623,22 @@ class DatabaseHelper {
   }) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
+    final encryptedServerUrl =
+        await LocalCryptoService.encryptString(serverUrl);
+    final encryptedDbName = await LocalCryptoService.encryptString(dbName);
+    final passwordInfo = LocalCryptoService.hashPassword(password);
 
     await db.delete('login_credentials');
 
     await db.insert(
       'login_credentials',
       {
-        'server_url': serverUrl,
-        'db_name': dbName,
+        'server_url_enc': encryptedServerUrl,
+        'db_name_enc': encryptedDbName,
         'username': username,
-        'password': password,
+        'password_salt': passwordInfo['salt'],
+        'password_hash': passwordInfo['hash'],
+        'password_iterations': int.parse(passwordInfo['iterations']!),
         'uid': uid,
         'created_at': now,
         'updated_at': now,
@@ -647,11 +655,22 @@ class DatabaseHelper {
       orderBy: 'id DESC',
     );
 
-    if (result.isNotEmpty) {
-      return result.first;
-    }
+    if (result.isEmpty) return null;
 
-    return null;
+    final rawRow = result.first;
+    return {
+      'id': rawRow['id'],
+      'server_url': await LocalCryptoService.decryptString(
+        (rawRow['server_url_enc'] ?? '').toString(),
+      ),
+      'db_name': await LocalCryptoService.decryptString(
+        (rawRow['db_name_enc'] ?? '').toString(),
+      ),
+      'username': rawRow['username'],
+      'uid': rawRow['uid'],
+      'created_at': rawRow['created_at'],
+      'updated_at': rawRow['updated_at'],
+    };
   }
 
   // ─────────────────────────────────────────────────────────
@@ -670,13 +689,42 @@ class DatabaseHelper {
 
     final result = await db.query(
       'login_credentials',
-      where: 'username = ? AND password = ?',
-      whereArgs: [username, password],
-      limit: 1,
+      where: 'username = ?',
+      whereArgs: [username],
+      limit: 5,
     );
 
-    if (result.isNotEmpty) {
-      return result.first;
+    for (final rawRow in result) {
+      final iterations = rawRow['password_iterations'] is int
+          ? rawRow['password_iterations'] as int
+          : int.tryParse((rawRow['password_iterations'] ?? '').toString()) ??
+              60000;
+
+      final isValid = LocalCryptoService.verifyPassword(
+        password: password,
+        salt: (rawRow['password_salt'] ?? '').toString(),
+        hash: (rawRow['password_hash'] ?? '').toString(),
+        iterations: iterations,
+      );
+
+      if (isValid) {
+        return {
+          'id': rawRow['id'],
+          'server_url': await LocalCryptoService.decryptString(
+            (rawRow['server_url_enc'] ?? '').toString(),
+          ),
+          'db_name': await LocalCryptoService.decryptString(
+            (rawRow['db_name_enc'] ?? '').toString(),
+          ),
+          'username': rawRow['username'],
+          // Return the typed password for existing login/session flow. It is
+          // never read back from SQLite because SQLite stores only a hash.
+          'password': password,
+          'uid': rawRow['uid'],
+          'created_at': rawRow['created_at'],
+          'updated_at': rawRow['updated_at'],
+        };
+      }
     }
 
     return null;

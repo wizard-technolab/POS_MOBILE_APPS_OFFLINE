@@ -55,19 +55,25 @@ class OdooService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // GET TOKEN — memory → SharedPreferences → auto re-auth
-  // Products screen જેવો જ pattern
+  // GET TOKEN — memory → secure storage → auto re-auth
   // ─────────────────────────────────────────────────────────────────────────
   static Future<String> _getToken() async {
-    // 1. Memory માં છે?
-    if (_token != null && _token!.isNotEmpty) return _token!;
+    // 1. Memory token is valid?
+    if (_token != null &&
+        _token!.isNotEmpty &&
+        !AppConfig.isJwtExpired(_token!)) {
+      return _token!;
+    }
 
-    // 2. SharedPreferences માં છે?
+    // 2. Secure storage token is valid?
     final saved = await AppConfig.getApiToken();
-    if (saved.isNotEmpty) {
+    if (saved.isNotEmpty && !AppConfig.isJwtExpired(saved)) {
       _token = saved;
       return _token!;
     }
+
+    _token = null;
+    await AppConfig.clearApiToken();
 
     // 3. Auto re-authenticate
     final email = await AppConfig.getApiEmail();
@@ -77,11 +83,16 @@ class OdooService {
     }
 
     final url = await baseUrl;
+    final deviceCode = await AppConfig.getDeviceCode();
     final response = await http
         .post(
           Uri.parse('$url/api/v1/auth'),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'email': email, 'password': password}),
+          body: jsonEncode({
+            'email': email,
+            'password': password,
+            if (deviceCode.isNotEmpty) 'device_code': deviceCode,
+          }),
         )
         .timeout(const Duration(seconds: 10));
 
@@ -108,6 +119,7 @@ class OdooService {
       final url = await baseUrl;
 
       // JWT LOGIN API
+      final deviceCode = await AppConfig.getDeviceCode();
       final response = await http
           .post(
             Uri.parse('$url/api/v1/auth'),
@@ -117,6 +129,7 @@ class OdooService {
             body: jsonEncode({
               'email': username,
               'password': password,
+              if (deviceCode.isNotEmpty) 'device_code': deviceCode,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -185,7 +198,11 @@ class OdooService {
   // AUTO RE-LOGIN (session expire fix)
   // ─────────────────────────────────────────
   static Future<bool> ensureSession() async {
-    if (_token != null) return true;
+    if (_token != null &&
+        _token!.isNotEmpty &&
+        !AppConfig.isJwtExpired(_token!)) {
+      return true;
+    }
     if (_savedUsername == null || _savedPassword == null) {
       return false;
     }

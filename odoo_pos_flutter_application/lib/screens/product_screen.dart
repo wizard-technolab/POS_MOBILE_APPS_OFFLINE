@@ -392,11 +392,16 @@ class ProductApiService {
       final baseUrl = await AppConfig.getServerUrl();
       if (baseUrl.isEmpty) return false;
 
+      final deviceCode = await AppConfig.getDeviceCode();
       final response = await http
           .post(
             Uri.parse('$baseUrl/api/v1/auth'),
             headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': email, 'password': password}),
+            body: jsonEncode({
+              'email': email,
+              'password': password,
+              if (deviceCode.isNotEmpty) 'device_code': deviceCode,
+            }),
           )
           .timeout(const Duration(seconds: 15));
 
@@ -473,12 +478,17 @@ class ProductApiService {
     // The main GET request will fail naturally if the server is offline.
 
     try {
-      if (_token == null || _token!.isEmpty) {
+      if (_token == null ||
+          _token!.isEmpty ||
+          AppConfig.isJwtExpired(_token!)) {
         _token = await AppConfig.getApiToken();
       }
 
-      // Try to authenticate if still no token
-      if (_token == null || _token!.isEmpty) {
+      // Try to authenticate if token is still missing or expired.
+      if (_token == null ||
+          _token!.isEmpty ||
+          AppConfig.isJwtExpired(_token!)) {
+        await AppConfig.clearApiToken();
         final ok = await _autoAuth();
         if (!ok) {
           return _loadFromLocal();

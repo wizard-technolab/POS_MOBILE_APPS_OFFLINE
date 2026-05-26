@@ -10,16 +10,22 @@ import '../domain/order_line.dart';
 class OrderLineRepository {
   final dbHelper = DatabaseHelper();
 
-  Future<List<Map<String, dynamic>>> getOrderLines(int orderId) async {
+  Future<List<Map<String, dynamic>>> getOrderLines(int orderId,
+      {int? sessionId}) async {
     try {
       final db = await dbHelper.database;
 
-      final rows = await db.rawQuery('''
+      final rows = await db.rawQuery(
+          '''
         SELECT ol.*
         FROM order_lines ol
         WHERE ol.order_id = ?
+          ${sessionId != null && sessionId > 0 ? 'AND (ol.session_id = ? OR ol.session_id IS NULL OR ol.session_id = 0)' : ''}
         ORDER BY ol.created_at ASC
-      ''', [orderId]);
+      ''',
+          sessionId != null && sessionId > 0
+              ? [orderId, sessionId]
+              : [orderId]);
 
       return rows.map((row) {
         final map = Map<String, dynamic>.from(row);
@@ -60,8 +66,8 @@ class OrderLineRepository {
     return maps.map(OrderLine.fromMap).toList();
   }
 
-  Future<void> saveOrderLines(
-      int orderId, List<Map<String, dynamic>> lines) async {
+  Future<void> saveOrderLines(int orderId, List<Map<String, dynamic>> lines,
+      {int? sessionId}) async {
     try {
       final db = await dbHelper.database;
       final now = DateTime.now().millisecondsSinceEpoch;
@@ -72,7 +78,10 @@ class OrderLineRepository {
 
         for (final line in lines) {
           await _insertLineTxn(txn,
-              orderId: orderId, line: line, createdAt: now);
+              orderId: orderId,
+              sessionId: sessionId ?? 0,
+              line: line,
+              createdAt: now);
         }
       });
     } catch (e) {
@@ -85,6 +94,7 @@ class OrderLineRepository {
     required int orderId,
     required List<Map<String, dynamic>> lines,
     required int createdAt,
+    int sessionId = 0,
   }) async {
     final db = await dbHelper.database;
     for (final line in lines) {
@@ -99,6 +109,7 @@ class OrderLineRepository {
         'order_lines',
         {
           'order_id': orderId,
+          'session_id': sessionId,
           'product_id': line['product_id'],
           'product_name': (line['product_name'] as String? ?? '').isNotEmpty
               ? (line['product_name'] as String)
@@ -126,6 +137,7 @@ class OrderLineRepository {
   Future<void> _insertLineTxn(
     Transaction txn, {
     required int orderId,
+    required int sessionId,
     required Map<String, dynamic> line,
     required int createdAt,
   }) async {
@@ -161,6 +173,7 @@ class OrderLineRepository {
 
     await txn.insert('order_lines', {
       'order_id': orderId,
+      'session_id': sessionId,
       'product_id': productId,
       'product_name': productName,
       'quantity': qty.toInt(),

@@ -1,5 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'secure_storage_service.dart';
 
 // When session changes in Settings, this notifier tells all screens to reload
 final sessionChangeNotifier = ValueNotifier<int>(0);
@@ -31,38 +35,43 @@ class AppConfig {
   static const _keySubscriptionExpDate = 'subscription_exp_date';
   static const _keySubscriptionEmail = 'subscription_email';
   static const _keyFirstLaunchAfterInstall = 'first_launch_after_install';
+  static Future<String> _getSecureString(String key) async {
+    return await SecureStorageService.read(key) ?? '';
+  }
+
+  static Future<void> _saveSecureString(String key, String value) async {
+    await SecureStorageService.write(key, value);
+  }
+
+  static Future<void> _removeSecureString(String key) async {
+    await SecureStorageService.delete(key);
+  }
 
   // ── Server URL ──────────────────────────────
   static Future<String> getServerUrl() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyServerUrl) ?? '';
+    return _getSecureString(_keyServerUrl);
   }
 
   static Future<void> saveServerUrl(String url) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyServerUrl, url.trim());
+    await _saveSecureString(_keyServerUrl, url.trim());
   }
 
   // ── API Key ─────────────────────────────────
   static Future<String> getApiKey() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyApiKey) ?? '';
+    return _getSecureString(_keyApiKey);
   }
 
   static Future<void> saveApiKey(String key) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyApiKey, key.trim());
+    await _saveSecureString(_keyApiKey, key.trim());
   }
 
   // ── Database Name ────────────────────────────
   static Future<String> getDb() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyDb) ?? '';
+    return _getSecureString(_keyDb);
   }
 
   static Future<void> saveDb(String db) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyDb, db.trim());
+    await _saveSecureString(_keyDb, db.trim());
   }
 
   // ── User ID ──────────────────────────────────
@@ -78,29 +87,51 @@ class AppConfig {
 
   // ── JWT API Token ────────────────────────────
   static Future<String> getApiToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyApiToken) ?? '';
+    return _getSecureString(_keyApiToken);
   }
 
   static Future<void> saveApiToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyApiToken, token);
+    await _saveSecureString(_keyApiToken, token);
   }
 
   static Future<void> clearApiToken() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keyApiToken);
+    await _removeSecureString(_keyApiToken);
+  }
+
+  static bool isJwtExpired(
+    String token, {
+    Duration leeway = const Duration(minutes: 1),
+  }) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+
+      final payload = jsonDecode(
+        utf8.decode(
+          base64Url.decode(base64Url.normalize(parts[1])),
+        ),
+      ) as Map<String, dynamic>;
+
+      final exp = payload['exp'];
+      if (exp is! int) return true;
+
+      final expiry = DateTime.fromMillisecondsSinceEpoch(
+        exp * 1000,
+        isUtc: true,
+      );
+      return DateTime.now().toUtc().isAfter(expiry.subtract(leeway));
+    } catch (_) {
+      return true;
+    }
   }
 
   // ── API Email ────────────────────────────────  ← NEW
   static Future<String> getApiEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyApiEmail) ?? '';
+    return _getSecureString(_keyApiEmail);
   }
 
   static Future<void> saveApiEmail(String email) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
+    await _saveSecureString(
       _keyApiEmail,
       email.trim().toLowerCase(),
     );
@@ -108,13 +139,11 @@ class AppConfig {
 
   // ── User Profile Email ───────────────────────
   static Future<String> getUserProfileEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyUserProfileEmail) ?? '';
+    return _getSecureString(_keyUserProfileEmail);
   }
 
   static Future<void> saveUserProfileEmail(String email) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
+    await _saveSecureString(
       _keyUserProfileEmail,
       email.trim().toLowerCase(),
     );
@@ -123,13 +152,11 @@ class AppConfig {
   // ─────────────────────────────────────────────
   // API Password ─────────────────────────────  ← NEW
   static Future<String> getApiPassword() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyApiPassword) ?? '';
+    return _getSecureString(_keyApiPassword);
   }
 
   static Future<void> saveApiPassword(String password) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyApiPassword, password);
+    await _saveSecureString(_keyApiPassword, password);
   }
 
   // ─────────────────────────────────────────────
@@ -137,13 +164,11 @@ class AppConfig {
   // ─────────────────────────────────────────────
 
   static Future<String> getDeviceCode() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyDeviceCode) ?? '';
+    return _getSecureString(_keyDeviceCode);
   }
 
   static Future<void> saveDeviceCode(String code) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyDeviceCode, code.trim());
+    await _saveSecureString(_keyDeviceCode, code.trim());
   }
 
   // ─────────────────────────────────────────────
@@ -231,37 +256,31 @@ class AppConfig {
 
   // ── SUBSCRIPTION CODE ────────────────────────
   static Future<String> getSubscriptionCode() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keySubscriptionCode) ?? '';
+    return _getSecureString(_keySubscriptionCode);
   }
 
   /// Save subscription code locally for offline access
   static Future<void> saveSubscriptionCode(String code) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keySubscriptionCode, code.trim().toUpperCase());
+    await _saveSecureString(_keySubscriptionCode, code.trim().toUpperCase());
     subscriptionValidNotifier.value = true;
   }
 
   /// Get the saved subscription expiration date string (persisted locally)
   static Future<String> getSubscriptionExpDate() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keySubscriptionExpDate) ?? '';
+    return _getSecureString(_keySubscriptionExpDate);
   }
 
   /// Save subscription expiration date locally for offline access
   static Future<void> saveSubscriptionExpDate(String expDate) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keySubscriptionExpDate, expDate);
+    await _saveSecureString(_keySubscriptionExpDate, expDate);
   }
 
   static Future<String> getSubscriptionEmail() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keySubscriptionEmail) ?? '';
+    return _getSecureString(_keySubscriptionEmail);
   }
 
   static Future<void> saveSubscriptionEmail(String email) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keySubscriptionEmail, email.trim().toLowerCase());
+    await _saveSecureString(_keySubscriptionEmail, email.trim().toLowerCase());
   }
 
   /// Check if subscription is valid LOCALLY (works offline).
@@ -327,10 +346,9 @@ class AppConfig {
 
   // ── CLEAR SUBSCRIPTION (but keep data for offline expiration check) ──
   static Future<void> clearSubscription() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_keySubscriptionCode);
-    await prefs.remove(_keySubscriptionExpDate);
-    await prefs.remove(_keySubscriptionEmail);
+    await _removeSecureString(_keySubscriptionCode);
+    await _removeSecureString(_keySubscriptionExpDate);
+    await _removeSecureString(_keySubscriptionEmail);
     subscriptionValidNotifier.value = false;
   }
 
@@ -338,7 +356,7 @@ class AppConfig {
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyUid);
-    await prefs.remove(_keyApiToken);
+    await _removeSecureString(_keyApiToken);
     // Intentionally keep:
     // server_url, email, password → for re-login
     // subscription_code, subscription_exp_date → for offline expiry check

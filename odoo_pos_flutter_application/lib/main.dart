@@ -14,6 +14,7 @@ import 'services/cart_service.dart';
 import 'services/db_helper.dart';
 import 'services/sync_manager.dart';
 import 'services/app_config.dart';
+import 'widgets/security_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -48,7 +49,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'POS App',
       theme: ThemeData.dark(),
-      home: const AuthGate(), // 🔥 New gate for auth/session checking
+      home:
+          const SecurityGate(child: AuthGate()), // Security + auth/session gate
     );
   }
 }
@@ -191,6 +193,15 @@ class _MainShellState extends State<MainShell> {
     // When a pending order is restored, CartService fires this notifier and
     // MainShell switches to the Cart tab (index 1) automatically.
     CartService.instance.navigateToCartNotifier.addListener(_onNavigateToCart);
+
+    // Trigger initial sync after the UI has rendered
+    _triggerInitialSync();
+  }
+
+  void _triggerInitialSync() async {
+    // Ensure the widget is still mounted before performing async operations
+    if (!mounted) return;
+    await SyncManager().syncAll();
   }
 
   // ─────────────────────────────────────────────

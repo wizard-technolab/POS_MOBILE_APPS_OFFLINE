@@ -460,6 +460,7 @@ class PaymentSheetState extends State<PaymentSheet> {
               orderId: cart.editingPendingLocalId!,
               lines: lines,
               createdAt: now,
+              sessionId: sessionId,
             );
 
             orderId = cart.editingPendingLocalId!;
@@ -556,6 +557,7 @@ class PaymentSheetState extends State<PaymentSheet> {
 
           final payPayload = {
             'device_code': deviceCode,
+            'session_id': sessionId,
             // Send current cart lines so the server updates the order before paying.
             // Without this, Odoo keeps the OLD draft lines and the newly added
             // items never appear in the backend or on the receipt.
@@ -791,6 +793,7 @@ class PaymentSheetState extends State<PaymentSheet> {
               orderId: cart.editingPendingLocalId!,
               lines: lines,
               createdAt: now,
+              sessionId: sessionId,
             );
 
             orderId = cart.editingPendingLocalId!;

@@ -168,12 +168,12 @@ class _LoginScreenState extends State<LoginScreen> {
       if (offline != null) {
         await AppConfig.saveServerUrl(offline['server_url'] ?? '');
         await AppConfig.saveApiEmail(offline['username']);
-        await AppConfig.saveApiPassword(offline['password']);
+        await AppConfig.saveApiPassword(password);
         await AppConfig.saveUid(offline['uid'] ?? 0);
 
         OdooService.setSessionInfo(
           username: offline['username'],
-          password: offline['password'],
+          password: password,
         );
 
         success = true;
@@ -270,12 +270,12 @@ class _LoginScreenState extends State<LoginScreen> {
         if (allowOffline == true) {
           await AppConfig.saveServerUrl(offline['server_url'] ?? '');
           await AppConfig.saveApiEmail(offline['username']);
-          await AppConfig.saveApiPassword(offline['password']);
+          await AppConfig.saveApiPassword(password);
           await AppConfig.saveUid(offline['uid'] ?? 0);
 
           OdooService.setSessionInfo(
             username: offline['username'],
-            password: offline['password'],
+            password: password,
           );
 
           success = true;
@@ -287,6 +287,18 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = false);
 
+    // if (success) {
+    //   Navigator.of(context).pushReplacement(
+    //     MaterialPageRoute(
+    //       builder: (_) => const PosSessionScreen(),
+    //     ),
+    //   );
+    // } else {
+    //   setState(() {
+    //     _errorMsg =
+    //         'Login failed. Check email, password, saved offline credentials, or internet.';
+    //   });
+    // }
     if (success) {
       await _refreshSavedSubscriptionIfNeeded();
 

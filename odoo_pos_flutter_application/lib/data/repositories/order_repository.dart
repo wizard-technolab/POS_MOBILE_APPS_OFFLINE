@@ -77,6 +77,7 @@ class OrderRepository {
           orderId: orderId,
           lines: lines,
           createdAt: now,
+          sessionId: sessionId,
         );
 
         debugPrint('✅ Inserted ${lines.length} lines for order $orderId');
@@ -341,12 +342,14 @@ class OrderRepository {
   }
 
   // ── GET Order Lines (delegates to OrderLineRepository) ─────────────────
-  Future<List<Map<String, dynamic>>> getOrderLines(int orderId) =>
-      _lineRepo.getOrderLines(orderId);
+  Future<List<Map<String, dynamic>>> getOrderLines(int orderId,
+          {int? sessionId}) =>
+      _lineRepo.getOrderLines(orderId, sessionId: sessionId);
 
   // ── SAVE Order Lines (delegates to OrderLineRepository) ────────────────
-  Future<void> saveOrderLines(int orderId, List<Map<String, dynamic>> lines) =>
-      _lineRepo.saveOrderLines(orderId, lines);
+  Future<void> saveOrderLines(int orderId, List<Map<String, dynamic>> lines,
+          {int? sessionId}) =>
+      _lineRepo.saveOrderLines(orderId, lines, sessionId: sessionId);
 
   // ── GET Unsynced/Pending Orders ─────────────
   // Fetches orders with status = 'pending' — paid offline orders waiting to sync.
@@ -559,6 +562,7 @@ class OrderRepository {
             'order_lines',
             {
               'order_id': localId,
+              'session_id': sessionId,
               'product_id': line['product_id'] as int? ?? 0,
               'product_name': line['product_name'] as String? ?? 'Unknown',
               'quantity': lineQty.toInt(),
@@ -604,8 +608,8 @@ class OrderRepository {
       final existing = await db.query(
         'orders',
         columns: ['id'],
-        where: 'odoo_order_id = ?',
-        whereArgs: [odooOrderId],
+        where: 'odoo_order_id = ? AND session_id = ?',
+        whereArgs: [odooOrderId, sessionId],
         limit: 1,
       );
 
@@ -761,6 +765,17 @@ class OrderRepository {
         whereArgs: [orderId],
       );
 
+      final orderRows = await db.query(
+        'orders',
+        columns: ['session_id'],
+        where: 'id = ?',
+        whereArgs: [orderId],
+        limit: 1,
+      );
+      final lineSessionId = orderRows.isNotEmpty
+          ? ((orderRows.first['session_id'] as int?) ?? 0)
+          : 0;
+
       // 2. Delete old lines — they will be replaced with the current cart state
       await db
           .delete('order_lines', where: 'order_id = ?', whereArgs: [orderId]);
@@ -775,6 +790,7 @@ class OrderRepository {
 
         await db.insert('order_lines', {
           'order_id': orderId,
+          'session_id': lineSessionId,
           'product_id': line['product_id'] ?? 0,
           'product_name': line['product_name'] ?? '',
           'quantity': qty.toInt(),
@@ -966,9 +982,11 @@ class OrderRepository {
           'odoo_order_id',
           'customer_name',
           'payment_method',
+          'name',
+          'session_id',
         ],
-        where: 'odoo_order_id = ?',
-        whereArgs: [serverId],
+        where: 'odoo_order_id = ? AND session_id = ?',
+        whereArgs: [serverId, currentSessionId],
         limit: 1,
       );
 
@@ -1045,6 +1063,7 @@ class OrderRepository {
             await saveOrderLines(
               localId,
               serverLines.cast<Map<String, dynamic>>(),
+              sessionId: currentSessionId,
             );
           }
         } catch (e) {
@@ -1064,9 +1083,11 @@ class OrderRepository {
             'status',
             'customer_name',
             'payment_method',
+            'name',
+            'session_id',
           ],
-          where: 'external_id = ?',
-          whereArgs: [serverExtId],
+          where: 'external_id = ? AND session_id = ?',
+          whereArgs: [serverExtId, currentSessionId],
           limit: 1,
         );
 
@@ -1134,6 +1155,7 @@ class OrderRepository {
               await saveOrderLines(
                 localId,
                 serverLines.cast<Map<String, dynamic>>(),
+                sessionId: currentSessionId,
               );
             }
           } catch (e) {
@@ -1204,7 +1226,8 @@ class OrderRepository {
             return line;
           }).toList();
 
-          await saveOrderLines(newLocalId, enrichedLines);
+          await saveOrderLines(newLocalId, enrichedLines,
+              sessionId: currentSessionId);
 
           debugPrint(
             '✅ Cached ${enrichedLines.length} lines for order '

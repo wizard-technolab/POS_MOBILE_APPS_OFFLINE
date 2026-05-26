@@ -27,15 +27,41 @@ migrate_working_dir/
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
-/build/
+build/
+coverage/
 
 # Symbolication related
 app.*.symbols
 
+# Android build/cache
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/**/build/
+
+# Signing / developer identity secrets - keep only encrypted .gpg files in repo
+android/key.properties
+android/keystore.properties
+android/app/key.jks
+android/app/*.jks
+android/app/*.keystore
+*.pem
+*.p12
+*.mobileprovision
+*.cer
+
 # Obfuscation related
 app.*.map.json
+
+# Dart define secrets
+.env
+*.env
+
+# Keep encrypted versions if you commit them intentionally
+!*.gpg
 
 # Android Studio will place build artifacts here
 /android/app/debug

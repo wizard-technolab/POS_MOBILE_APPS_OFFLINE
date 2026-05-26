@@ -934,7 +934,7 @@ class DeltaSyncManager {
   /// Hash a map to detect changes
   String _hashMap(Map<String, dynamic> data) {
     final jsonStr = jsonEncode(data);
-    return md5.convert(utf8.encode(jsonStr)).toString();
+    return sha256.convert(utf8.encode(jsonStr)).toString();
   }
 
   // ─────────────────────────────────────────────

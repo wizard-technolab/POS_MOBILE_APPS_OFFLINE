@@ -356,6 +356,13 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   Future<void> _signOut() async {
+    if (!_isOnline) {
+      _showSnack(
+          'Cannot sign out while offline. Please connect to the internet to ensure your local data is synced to Odoo.',
+          kOrange);
+      return;
+    }
+
     // Save any active cart items as a pending draft before clearing auth.
     // This ensures no items are silently lost when the user logs out from Settings.
     final cart = CartService.instance;
