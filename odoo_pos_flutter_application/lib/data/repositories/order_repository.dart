@@ -130,9 +130,12 @@ class OrderRepository {
     final List<Map<String, dynamic>> lastOrder = await db.query(
       'orders',
       columns: ['name'],
-      where:
-          'session_id = ? AND created_at > ? AND status != ? AND name != ? AND name LIKE ?',
-      whereArgs: [sessionId, resetTime, 'cancel', '/', '$sessionName - %'],
+      where: 'session_id = ? AND created_at > ? AND name != ? AND name LIKE ?',
+      // Count named cancelled orders too. A restored order cancelled as
+      // ...00004 must still reserve 00004, otherwise the next order would
+      // reuse the same number. Anonymous cancel rows keep name='/' and remain
+      // excluded so they do not consume a sequence.
+      whereArgs: [sessionId, resetTime, '/', '$sessionName - %'],
       orderBy:
           'created_at DESC', // Chronological order is more reliable for sequences
       limit: 1,
@@ -482,7 +485,9 @@ class OrderRepository {
         {
           if (paymentMethod != null) 'payment_method': paymentMethod,
           if (synced != null) 'synced': synced,
-          if (status == 'cancel') 'name': '/', // Assign "/" to cancelled orders
+          // Keep the existing order name when changing the status. This is
+          // important for restored orders: cancelling Clothes shop/...00004
+          // should mark that same sequence as cancelled, not rename it to '/'.
           'status': status,
           'updated_at': DateTime.now().millisecondsSinceEpoch,
         },
@@ -743,6 +748,7 @@ class OrderRepository {
     required int customerId,
     String? customerName,
     String? customerNote,
+    String? status,
     int synced = 0, // Default to 0 (unsynced) for draft updates
   }) async {
     try {
@@ -758,6 +764,7 @@ class OrderRepository {
           'customer_id': customerId,
           'customer_name': customerName ?? '',
           'customer_note': customerNote ?? '',
+          if (status != null) 'status': status,
           'synced': synced,
           'updated_at': now,
         },

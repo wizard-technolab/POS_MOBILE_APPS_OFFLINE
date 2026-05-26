@@ -128,6 +128,8 @@ class PaymentSheetState extends State<PaymentSheet> {
             customerId: customerId,
             customerName: customerName,
             customerNote: cart.customerNoteNotifier.value,
+            status:
+                'draft', // Re-hold the restored order; do not leave it paid/pending
             synced: 0, // Stay unsynced in local DB as we are offline
           );
 
@@ -263,6 +265,7 @@ class PaymentSheetState extends State<PaymentSheet> {
             customerId: customerId,
             customerName: customerName,
             customerNote: cart.customerNoteNotifier.value,
+            status: 'draft', // Keep the same restored order in hold/draft state
             synced: 1, // Mark as synced because the API call just succeeded
           );
 

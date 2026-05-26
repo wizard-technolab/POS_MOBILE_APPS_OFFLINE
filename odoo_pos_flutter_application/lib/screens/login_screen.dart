@@ -86,32 +86,55 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Refresh saved subscription from the license server without breaking
+  /// offline/local validity. This must never clear a valid local subscription
+  /// just because the server/ngrok/network is unavailable or returns a generic
+  /// validation error during login.
   Future<void> _refreshSavedSubscriptionIfNeeded() async {
     final savedCode = await AppConfig.getSubscriptionCode();
     if (savedCode.isEmpty) return;
 
+    final localStillValid = await AppConfig.isSubscriptionValid();
     final email = await AppConfig.getApiEmail();
+
+    // If the saved subscription is still valid locally, allow login to continue
+    // immediately. A failed refresh should not force the SubscriptionScreen.
+    if (localStillValid) {
+      final result = await SubscriptionService.validateLicenseCode(savedCode);
+
+      if (result['status'] == 'success') {
+        await AppConfig.saveSubscriptionExpDate(result['exp_date']);
+        await AppConfig.saveSubscriptionEmail(email);
+      }
+
+      // Keep local subscription for all non-success refresh responses here.
+      // Server-side revocation can still be handled by background sync, but
+      // login must remain offline-capable.
+      return;
+    }
+
+    // Local subscription is missing/expired. Try online validation once.
     final result = await SubscriptionService.validateLicenseCode(savedCode);
 
     if (result['status'] == 'success') {
       await AppConfig.saveSubscriptionExpDate(result['exp_date']);
       await AppConfig.saveSubscriptionEmail(email);
+      await AppConfig.markFirstLaunchComplete();
       return;
     }
 
     final message = (result['message'] ?? '').toString().toLowerCase();
-    if (message.contains('connection') || message.contains('server')) {
-      // Keep offline cache when backend is unavailable.
+    if (message.contains('connection') ||
+        message.contains('server') ||
+        message.contains('timeout') ||
+        message.contains('network')) {
+      // Backend unavailable: do not clear saved subscription data.
       return;
     }
 
-    // Backend says the code is invalid/expired/revoked.
-    if (result['exp_date'] != null &&
-        result['exp_date'].toString().isNotEmpty) {
-      await AppConfig.saveSubscriptionExpDate(result['exp_date']);
-    } else {
-      await AppConfig.clearSubscription();
-    }
+    // Only clear when local subscription is already invalid and backend also
+    // rejects it explicitly.
+    await AppConfig.clearSubscription();
   }
 
   // Show a styled dialog for backend errors like "No POS access"
@@ -340,12 +363,24 @@ class _LoginScreenState extends State<LoginScreen> {
     //   });
     // }
     if (success) {
+      final hadValidSubscriptionBeforeRefresh =
+          await AppConfig.isSubscriptionValid();
+
       await _refreshSavedSubscriptionIfNeeded();
 
-      final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
       final hasValidSubscription = await AppConfig.isSubscriptionValid();
+      final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
 
-      if (isFirstLaunch || !hasValidSubscription) {
+      // If this install already has a valid local subscription, never force the
+      // subscription screen just because it is the first route after re-login.
+      // Marking first launch complete here prevents the subscription screen from
+      // appearing again after logout/login.
+      if (hasValidSubscription &&
+          (hadValidSubscriptionBeforeRefresh || isFirstLaunch)) {
+        await AppConfig.markFirstLaunchComplete();
+      }
+
+      if (!hasValidSubscription) {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => const SubscriptionScreen(),

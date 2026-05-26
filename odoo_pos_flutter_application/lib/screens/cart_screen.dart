@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../widgets/product_image.dart';
@@ -1279,19 +1279,43 @@ class _CartScreenState extends State<CartScreen> {
               .expand((combo) => combo.toOrderLines(taxRate: _cart.taxRate)),
         ];
 
-        await orderRepo.createOfflineOrder(
-          externalId: externalId,
-          deviceCode: deviceCode,
-          customerId: customerId,
-          customerName: customerName,
-          customerNote: _cart.customerNoteNotifier.value,
-          sessionId: sessionId,
-          lines: localLines,
-          total: _cart.total,
-          taxAmount: _cart.taxAmount,
-          status: 'draft',
-          companyName: companyName,
-        );
+        // OFFLINE AUTO-SYNC FIX:
+        // When a pending/held order is restored with "Add back to cart", every
+        // cart change schedules this auto-sync. The old code always created a
+        // NEW offline draft here, which consumed the next sequence number
+        // (00005, 00006, ...) and left the restored order visible as pending.
+        // In edit mode we must update the selected SQLite row in place.
+        if (_cart.editingPendingLocalId != null) {
+          await orderRepo.updateOfflineOrder(
+            orderId: _cart.editingPendingLocalId!,
+            lines: localLines,
+            total: _cart.total,
+            taxAmount: _cart.taxAmount,
+            customerId: customerId,
+            customerName: customerName,
+            customerNote: _cart.customerNoteNotifier.value,
+            status: 'draft',
+            synced: 0,
+          );
+          debugPrint(
+            '✅ Offline auto-sync updated existing restored order '
+            '${_cart.editingPendingLocalId} without creating a new sequence',
+          );
+        } else {
+          await orderRepo.createOfflineOrder(
+            externalId: externalId,
+            deviceCode: deviceCode,
+            customerId: customerId,
+            customerName: customerName,
+            customerNote: _cart.customerNoteNotifier.value,
+            sessionId: sessionId,
+            lines: localLines,
+            total: _cart.total,
+            taxAmount: _cart.taxAmount,
+            status: 'draft',
+            companyName: companyName,
+          );
+        }
       } else {
         final payload = {
           'external_id': externalId,
@@ -2118,6 +2142,11 @@ class _CartScreenState extends State<CartScreen> {
   Future<void> _cancelOrder() async {
     final cart = CartService.instance;
 
+    // Stop any delayed draft auto-sync from firing while we are cancelling.
+    // This avoids a race where a restored order could be re-saved as draft
+    // immediately after the cashier chose Cancel.
+    _autoSyncTimer?.cancel();
+
     // If cart is empty, nothing to record — just clear and return
     if (cart.cart.isEmpty && cart.comboCart.isEmpty) {
       cart.clearCart();
@@ -2354,7 +2383,9 @@ class _CartScreenState extends State<CartScreen> {
             .expand((combo) => combo.toOrderLines(taxRate: cart.taxRate)),
       ];
 
-      // Create the order first (createOfflineOrder saves as 'draft' by default)
+      // Save directly as cancelled so the sequence generator is not called.
+      // Creating it as draft first consumed the next offline order number even
+      // though the row was immediately renamed to '/'.
       final orderId = await orderRepo.createOfflineOrder(
         externalId: externalId,
         deviceCode: deviceCode,
@@ -2365,12 +2396,11 @@ class _CartScreenState extends State<CartScreen> {
         lines: lines,
         total: cart.total,
         taxAmount: cart.taxAmount,
+        status: 'cancel',
         // companyName: companyName,
       );
 
       if (orderId > 0) {
-        // Immediately mark as cancelled
-        await orderRepo.cancelOfflineOrder(externalId);
         debugPrint('✅ Cancelled order saved locally with ID: $orderId');
       }
     } catch (e) {
