@@ -114,6 +114,41 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // Show a styled dialog for backend errors like "No POS access"
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.error_outline, color: kRed, size: 28),
+            const SizedBox(width: 12),
+            const Text(
+              'Access Denied',
+              style:
+                  TextStyle(color: kTextPrimary, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(color: kTextSecondary, fontSize: 16),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text(
+              'OK',
+              style: TextStyle(color: kPurple, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Helper to sanitize the URL before sending to Odoo
   String _sanitizeUrl(String url) {
     url = url.trim();
@@ -221,7 +256,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
           success = true;
         }
-      } catch (_) {
+      } catch (e) {
+        // Handle specific error messages from Odoo (e.g. POS access restriction)
+        if (mounted) {
+          final cleanMessage = e.toString().replaceFirst('Exception: ', '');
+          _showErrorDialog(cleanMessage);
+        }
         success = false;
       }
     }

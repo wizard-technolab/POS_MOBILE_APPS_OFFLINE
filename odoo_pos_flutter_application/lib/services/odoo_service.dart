@@ -134,23 +134,11 @@ class OdooService {
           )
           .timeout(const Duration(seconds: 10));
 
-      if (response.statusCode != 200) {
-        return false;
-      }
-
       final data = jsonDecode(response.body);
 
-      /*
-      Expected backend response:
-
-      {
-        "status": "success",
-        "token": "JWT_TOKEN_HERE",
-        "user_id": 7
-      }
-    */
-
-      if (data['status'] == 'success' && data['token'] != null) {
+      if (response.statusCode == 200 &&
+          data['status'] == 'success' &&
+          data['token'] != null) {
         final String token = data['token'] ?? '';
         final int uid = data['user_id'] ?? 0;
 
@@ -177,9 +165,13 @@ class OdooService {
         return true;
       }
 
-      return false;
+      // Propagate the specific error message from the Odoo backend
+      final errorMessage = data['message'] ??
+          'Authentication failed. Please check your credentials.';
+      throw Exception(errorMessage);
     } catch (e) {
-      return false;
+      // Re-throw so the Login Screen's catch block can access the message
+      rethrow;
     }
   }
 
