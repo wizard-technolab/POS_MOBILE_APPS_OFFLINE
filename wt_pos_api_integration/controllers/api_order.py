@@ -87,6 +87,29 @@ class PosApiController(http.Controller):
                 )
                 return False
             
+            # --- NEW: Check for POS group membership ---
+            # Ensure the authenticated user has either 'Point of Sale / User' or 'Point of Sale / Administrator' group.
+            # This prevents users without POS access from using POS APIs.
+            has_pos_user_group = user.has_group('point_of_sale.group_pos_user')
+            has_pos_manager_group = user.has_group('point_of_sale.group_pos_manager')
+            has_system_admin_group = user.has_group('base.group_system')
+
+            if not (has_pos_user_group or has_pos_manager_group):
+                _logger.warning(
+                    'User %s (ID: %s) does not have POS access for %s from IP: %s',
+                    user.login,
+                    user_id,
+                    request.httprequest.path,
+                    request.httprequest.remote_addr,
+                )
+                # Security Audit: Log unauthorized POS access attempt to database
+                self._log(
+                    {'login': user.login, 'user_id': user_id, 'event': 'POS_ACCESS_DENIED'},
+                    {'status': 'error', 'message': f'Access Denied for endpoint: {request.httprequest.path}'},
+                    'error'
+                )
+                return False # User is authenticated but not authorized for POS
+
             request.update_env(user=user)
             return True
             
@@ -187,7 +210,11 @@ class PosApiController(http.Controller):
         # Security Check: Ensure the user calling the API is allowed to use this session.
         # Usually, this means the user is the one who opened it or is a POS manager.
         current_user = request.env.user
-        if session.user_id != current_user and not current_user.has_group('point_of_sale.group_pos_manager'):
+        if (
+            session.user_id != current_user
+            and not current_user.has_group('point_of_sale.group_pos_manager')
+            and not current_user.has_group('base.group_system')
+        ):
             return None, (
                 f'Unauthorized: User {current_user.name} does not have access to Session "{session.name}".'
             )
@@ -1000,7 +1027,12 @@ class PosApiController(http.Controller):
                 status='error', message='Order not found', code=404)
 
         # 🔒 SESSION ISOLATION CHECK
-        if session_id and order.session_id.id != session_id:
+        if not session_id:
+            return self._json_response(
+                status='error',
+                message='session_id is required to fetch order lines.',
+                code=400)
+        if order.session_id.id != session_id:
             return self._json_response(
                 status='error', 
                 message='Unauthorized: Order lines belong to a different session.', 
@@ -1227,6 +1259,16 @@ class PosApiController(http.Controller):
             self._log(payload, res, 'error')
             return self._json_response(
                 status='error', message=res['message'], code=404)
+
+        payload_session_id = int(payload.get('session_id') or 0)
+        if not payload_session_id:
+            return self._json_response(
+                status='error', message='Missing field: session_id', code=400)
+        if order.session_id.id != payload_session_id:
+            return self._json_response(
+                status='error',
+                message='Unauthorized: Order belongs to a different session.',
+                code=403)
 
         # Guard — cannot overwrite a paid order
         if order.state in ('done', 'paid', 'invoiced'):
@@ -1679,6 +1721,16 @@ class PosApiController(http.Controller):
             self._log(payload, res, 'error')
             return self._json_response(
                 status='error', message=res['message'], code=404)
+
+        payload_session_id = int(payload.get('session_id') or 0)
+        if not payload_session_id:
+            return self._json_response(
+                status='error', message='Missing field: session_id', code=400)
+        if order.session_id.id != payload_session_id:
+            return self._json_response(
+                status='error',
+                message='Unauthorized: Order belongs to a different session.',
+                code=403)
 
         # ── Step 5: Guard — only draft orders can be paid ─────────────────────
         # If already paid → return success (idempotent — safe to retry)
