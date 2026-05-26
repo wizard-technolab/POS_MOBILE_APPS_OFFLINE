@@ -111,6 +111,37 @@ class AuthController(http.Controller):
             user_recs = request.env['res.users'].sudo().browse(user_id_data)
             user_email = (user_recs.email or user_recs.login or '').lower()
 
+            # POS app access: allow POS User, POS Manager, or Odoo Settings/System admin.
+            # In Odoo, general Administrators may not always explicitly carry
+            # point_of_sale.group_pos_user, especially after group XML/cache changes.
+            has_pos_user_group = user_recs.has_group('point_of_sale.group_pos_user')
+            has_pos_manager_group = user_recs.has_group('point_of_sale.group_pos_manager')
+            has_system_admin_group = user_recs.has_group('base.group_system')
+
+            if not (has_pos_user_group or has_pos_manager_group or has_system_admin_group):
+                _logger.warning(
+                    'Security Audit: User %s (ID: %s) authenticated but lacks POS/API access from IP %s',
+                    email, user_id_data, request.httprequest.remote_addr,
+                )
+                try:
+                    request.env['sync.log'].sudo().create({
+                        'endpoint': '/api/v1/auth',
+                        'method': 'POST',
+                        'payload': json.dumps({'email': email, 'event': 'POS_UNAUTHORIZED_LOGIN'}),
+                        'response': json.dumps({'status': 'error', 'message': 'Authenticated but lacks POS/API groups'}),
+                        'status': 'error',
+                    })
+                except Exception:
+                    pass
+                return _json_response(
+                    {
+                        'status': 'error',
+                        'message': 'This user does not have Point of Sale access.',
+                        'code': 403,
+                    },
+                    status=403,
+                )
+
         except Exception as exc:  # pylint: disable=broad-except
             _logger.exception('User fetch failed: %s', exc)
             return _json_response(
