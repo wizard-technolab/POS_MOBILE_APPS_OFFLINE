@@ -35,7 +35,7 @@ export BLOCK_COMPROMISED_DEVICES='true'
 To launch Test:
 export WT_APP_SECRET_KEY='d4f298c3e8e94172a52b88135c754688439810a9094772186934891275454621'
 export WT_LICENSE_SERVER_URL='https://synopses-wreckage-babied.ngrok-free.dev'
-export BLOCK_COMPROMISED_DEVICES='false'
+export BLOCK_COMPROMISED_DEVICES='true'
 
 flutter run \
   --dart-define=WT_APP_SECRET_KEY="$WT_APP_SECRET_KEY" \

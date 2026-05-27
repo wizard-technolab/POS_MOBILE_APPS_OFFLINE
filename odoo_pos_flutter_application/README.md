@@ -1,4 +1,4 @@
-# OdoCart
+# odocart
 
 A new Flutter project.
 
