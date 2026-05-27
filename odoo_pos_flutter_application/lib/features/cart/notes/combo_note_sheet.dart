@@ -16,6 +16,7 @@ class ComboNoteSheet extends StatefulWidget {
   final String initialNote;
 
   const ComboNoteSheet({
+    super.key,
     required this.combo,
     required this.presetTags,
     required this.onApply,

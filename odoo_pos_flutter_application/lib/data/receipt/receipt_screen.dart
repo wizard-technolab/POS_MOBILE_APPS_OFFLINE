@@ -382,10 +382,12 @@ class _ReceiptScreenState extends State<ReceiptScreen> {
                                         printer,
                                       );
 
-                                      if (!mounted) return;
+                                      if (!context.mounted) return;
 
                                       if (connected) {
                                         Navigator.pop(context);
+
+                                        if (!context.mounted) return;
 
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(

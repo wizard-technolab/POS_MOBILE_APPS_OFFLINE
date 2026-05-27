@@ -11,7 +11,7 @@ import '../customer/customer_search_sheet.dart';
 import 'split_models.dart';
 
 class SplitFlowSheet extends StatefulWidget {
-  const SplitFlowSheet();
+  const SplitFlowSheet({super.key});
 
   @override
   State<SplitFlowSheet> createState() => SplitFlowSheetState();
@@ -132,16 +132,6 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
     // Round to 2 decimal places — same as CartService.total
     return double.parse(
         (subtotal + subtotal * taxRate / 100).toStringAsFixed(2));
-  }
-
-  // ── User actions ───────────────────────────────────────────────────────────
-
-  // Increase or decrease a single item's selected qty within [0, remainingQty].
-  void _changeQty(String key, int delta) {
-    final item = _remainingItems.firstWhere((i) => i.key == key);
-    final current = _selectedQty[key] ?? 0;
-    final next = (current + delta).clamp(0, item.remainingQty);
-    setState(() => _selectedQty[key] = next);
   }
 
   // Shortcut: select ALL remaining units of every item.
@@ -944,31 +934,6 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
 
         const SizedBox(height: 80), // space for fixed bottom bar
       ],
-    );
-  }
-
-  // Small circular +/- button used in the item card
-  Widget _qtyButton(IconData icon, VoidCallback? onTap) {
-    final active = onTap != null;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: BoxDecoration(
-          color: active
-              ? CartTheme.purple.withValues(alpha: 0.15)
-              : CartTheme.cardBorder,
-          shape: BoxShape.circle,
-        ),
-        child: Icon(
-          icon,
-          color: active
-              ? CartTheme.purple
-              : CartTheme.textSecondary.withValues(alpha: 0.4),
-          size: 16,
-        ),
-      ),
     );
   }
 

@@ -604,9 +604,4 @@ class PrintController extends ChangeNotifier {
       debugPrint('❌ Share error: $e');
     }
   }
-
-  @override
-  void dispose() {
-    super.dispose();
-  }
 }

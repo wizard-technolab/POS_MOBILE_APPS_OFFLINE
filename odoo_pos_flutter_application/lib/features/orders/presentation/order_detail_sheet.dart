@@ -271,30 +271,26 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
         }
       }
 
-      if (mounted) {
-        // Capture what we need BEFORE pop — widget unmounts after Navigator.pop()
-        final orderName = widget.order.name;
-        final ctx = context;
+      if (!mounted) return;
 
-        Navigator.pop(ctx); // Close detail sheet — widget unmounts here
+      final orderName = widget.order.name;
+      final ctx = context;
 
-        // Fire the CartService notifier so MainShell switches to Cart tab.
-        // This is a direct singleton call — no callback chain required.
-        // A short delay lets the sheet close animation finish first.
-        await Future.delayed(const Duration(milliseconds: 300));
-        CartService.instance.navigateToCartNotifier.value++;
+      if (!ctx.mounted) return;
+      Navigator.pop(ctx);
 
-        // Show confirmation notification (ctx belongs to the Orders tab overlay,
-        // which stays mounted inside the IndexedStack even after tab switch).
-        if (ctx.mounted) {
-          showTopNotification(
-            ctx,
-            'Order #$orderName added back to cart.',
-            color: AppColors.purple,
-            icon: Icons.shopping_cart_checkout_rounded,
-          );
-        }
-      }
+      await Future.delayed(const Duration(milliseconds: 300));
+
+      CartService.instance.navigateToCartNotifier.value++;
+
+      if (!ctx.mounted) return;
+
+      showTopNotification(
+        ctx,
+        'Order #$orderName added back to cart.',
+        color: AppColors.purple,
+        icon: Icons.shopping_cart_checkout_rounded,
+      );
     } catch (e) {
       setState(() => _linesError = 'Could not restore cart: $e');
     } finally {

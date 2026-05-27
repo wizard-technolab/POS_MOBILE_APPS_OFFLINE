@@ -363,9 +363,11 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       if (offline != null) {
+        if (!mounted) return;
+
         final allowOffline = await showDialog<bool>(
           context: context,
-          builder: (context) {
+          builder: (dialogContext) {
             return AlertDialog(
               backgroundColor: kCard,
               title: const Text(
@@ -379,13 +381,13 @@ class _LoginScreenState extends State<LoginScreen> {
               actions: [
                 TextButton(
                   onPressed: () {
-                    Navigator.pop(context, false);
+                    Navigator.pop(dialogContext, false);
                   },
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
                   onPressed: () {
-                    Navigator.pop(context, true);
+                    Navigator.pop(dialogContext, true);
                   },
                   child: const Text('Login Offline'),
                 ),
@@ -393,7 +395,7 @@ class _LoginScreenState extends State<LoginScreen> {
             );
           },
         );
-
+        if (!mounted) return;
         if (allowOffline == true) {
           await AppConfig.saveServerUrl(offline['server_url'] ?? '');
           await AppConfig.saveApiEmail(offline['username']);
@@ -430,31 +432,35 @@ class _LoginScreenState extends State<LoginScreen> {
       final hadValidSubscriptionBeforeRefresh =
           await AppConfig.isSubscriptionValid();
 
+      if (!mounted) return;
+
       debugPrint(
           '🔍 Post-login: subscription was valid before refresh? $hadValidSubscriptionBeforeRefresh');
 
-      // Attempt to refresh subscription (won't break offline subscriptions)
       await _refreshSavedSubscriptionIfNeeded();
+
+      if (!mounted) return;
 
       final hasValidSubscription = await AppConfig.isSubscriptionValid();
       final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
 
+      if (!mounted) return;
+
       debugPrint(
           '🔍 Post-login: subscription valid after refresh? $hasValidSubscription, first launch? $isFirstLaunch');
 
-      // If this install already has a valid local subscription, never force the
-      // subscription screen just because it is the first route after re-login.
-      // Marking first launch complete here prevents the subscription screen from
-      // appearing again after logout/login.
       if (hasValidSubscription &&
           (hadValidSubscriptionBeforeRefresh || isFirstLaunch)) {
         debugPrint('✅ Marking first launch as complete');
         await AppConfig.markFirstLaunchComplete();
+
+        if (!mounted) return;
       }
 
       if (!hasValidSubscription) {
         debugPrint(
             '⚠️  Navigating to SubscriptionScreen - subscription not valid');
+
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => const SubscriptionScreen(),
@@ -462,6 +468,7 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       } else {
         debugPrint('✅ Navigating to PosSessionScreen - subscription valid');
+
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => const PosSessionScreen(),

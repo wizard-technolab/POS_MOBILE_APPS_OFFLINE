@@ -7,7 +7,6 @@ import 'package:http/http.dart' as http;
 import 'package:sqflite/utils/utils.dart' as sqflite show firstIntValue;
 import 'app_config.dart';
 import 'odoo_service.dart';
-import '../data/repositories/product_repository.dart';
 import '../data/repositories/order_repository.dart';
 import 'subscription_service.dart';
 import 'db_helper.dart';

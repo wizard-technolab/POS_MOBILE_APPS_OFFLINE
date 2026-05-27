@@ -1051,6 +1051,11 @@ class DeltaSyncManager {
       final baseUrl = await AppConfig.getServerUrl();
       final token = await AppConfig.getApiToken();
 
+      if (baseUrl.isEmpty || token.isEmpty) {
+        debugPrint('⚠️ Missing credentials — skipping customer upload');
+        return;
+      }
+
       for (final customer in unsynced) {
         final localId = customer['id'] as int;
         final isNew = localId < 0;
@@ -1090,8 +1095,9 @@ class DeltaSyncManager {
             if (data['status'] == 'success') {
               if (isNew && data['data'] != null) {
                 final serverId = data['data']['id'] as int? ?? 0;
-                if (serverId > 0)
+                if (serverId > 0) {
                   await _resolveNewCustomerIdentity(localId, serverId);
+                }
               } else {
                 await _customerRepo.markCustomerAsSynced(localId);
               }
@@ -1210,30 +1216,5 @@ class DeltaSyncManager {
       debugPrint('❌ Error fetching customers by IDs: $e');
       return [];
     }
-  }
-
-  Future<void> _logSync({
-    required String entityType,
-    required int entityId,
-    required String action,
-    required String status,
-    String? error,
-  }) async {
-    // This helper is used by SyncManager, but we can implement a local version
-    // or call the database directly as done in _updateLastOrderSyncTime.
-    try {
-      final db = await DatabaseHelper().database;
-      await db.insert(
-        'sync_log',
-        {
-          'entity_type': entityType,
-          'entity_id': entityId,
-          'action': action,
-          'status': status,
-          'error': error,
-          'created_at': DateTime.now().millisecondsSinceEpoch,
-        },
-      );
-    } catch (_) {}
   }
 }

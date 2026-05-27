@@ -119,17 +119,20 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         });
 
         // Wait 2 seconds then redirect to session screen
+// Wait 2 seconds then redirect to session screen
         await Future.delayed(const Duration(seconds: 2));
 
-        if (mounted) {
-          await AppConfig.markFirstLaunchComplete();
+        if (!mounted) return;
 
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => const PosSessionScreen(),
-            ),
-          );
-        }
+        await AppConfig.markFirstLaunchComplete();
+
+        if (!mounted) return;
+
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => const PosSessionScreen(),
+          ),
+        );
       } else {
         setState(() {
           _errorMsg = result['message'] ?? 'Validation failed';

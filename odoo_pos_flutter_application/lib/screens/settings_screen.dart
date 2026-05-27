@@ -46,7 +46,6 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _isSyncing = false;
   bool _isSavingPos = false;
 
-  bool? _jwtConnected;
   bool _isOnline = true;
 
   // Real-time connectivity listener — updates _isOnline instantly on wifi drop/restore.
@@ -123,7 +122,6 @@ class _SettingsScreenState extends State<SettingsScreen>
       _loadConfig(),
       _loadUserData(),
       _loadSyncStatus(),
-      _checkJwtStatus(),
       _checkConnectionStatus(),
       _loadLicenseInfo(),
     ]);
@@ -189,13 +187,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     });
   }
 
-  Future<void> _checkJwtStatus() async {
-    final isLoggedIn = await AppConfig.isLoggedIn();
-
-    if (!mounted) return;
-    setState(() => _jwtConnected = isLoggedIn);
-  }
-
   Future<void> _checkConnectionStatus() async {
     // Start with current state (don't block)
     // If user was online before, assume online
@@ -253,41 +244,6 @@ class _SettingsScreenState extends State<SettingsScreen>
 
     setState(() => _isSavingPos = false);
     _showSnack('✅ POS Config saved successfully.', kGreen);
-  }
-
-  // ── RESET SEQUENCE ───────────────────────
-
-  Future<void> _handleResetSequence() async {
-    final sessionId = await AppConfig.getPosSessionId();
-    if (sessionId <= 0) return;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: kCard,
-        title: const Text('Reset Sequence?',
-            style: TextStyle(color: kTextPrimary)),
-        content: const Text(
-          'This will restart the offline order sequence from 0001 for the current session. '
-          'Existing orders will remain in history but will be ignored for the next sequence number.',
-          style: TextStyle(color: kTextSecondary),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Reset', style: TextStyle(color: kRed)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      await AppConfig.resetSequence(sessionId);
-      _showSnack('✅ Offline sequence reset to 0001', kGreen);
-    }
   }
 
   // ─────────────────────────────────────────
@@ -860,12 +816,6 @@ class _SettingsScreenState extends State<SettingsScreen>
               icon: Icons.notifications_rounded,
               label: 'Notifications',
               value: 'On',
-            ),
-            const _InfoRowDivider(),
-            _SettingsTile(
-              icon: Icons.restart_alt_rounded,
-              label: 'Reset Order Sequence',
-              onTap: _handleResetSequence,
             ),
           ],
         ),

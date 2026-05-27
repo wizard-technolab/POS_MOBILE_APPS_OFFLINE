@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../data/repositories/order_repository.dart';
 import '../../../services/app_config.dart';
-import '../../../services/delta_sync_manager.dart';
 import '../../../services/connectivity_service.dart';
 import '../../../services/odoo_service.dart';
 import '../domain/order.dart';
