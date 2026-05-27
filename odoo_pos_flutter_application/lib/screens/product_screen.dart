@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'dart:typed_data'; // For Uint8List — cached in _ProductImageTileState
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../services/api_client.dart';
 import '../widgets/product_image.dart'; // NEW: widget to show product image from base64
 
 bool _parseBool(dynamic raw) {
@@ -500,41 +501,11 @@ class ProductApiService {
         return FetchResult.error('No POS session selected');
       }
 
-      final response = await http.get(
-        Uri.parse(
-            '$baseUrl/api/products?limit=$limit&offset=$offset&include_combos=true&session_id=$sessionId'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $_token',
-        },
-      ).timeout(const Duration(seconds: 15));
-
-      // Token expired → re-auth once and retry
-      if (response.statusCode == 401) {
-        final ok = await _autoAuth();
-        if (!ok) {
-          return _loadFromLocal();
-        }
-
-        // Retry with new token
-        final sessionId = await AppConfig.getPosSessionId();
-        final retry = await http.get(
-          Uri.parse(
-              '$baseUrl/api/products?limit=$limit&offset=$offset&include_combos=true&session_id=$sessionId'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $_token',
-          },
-        ).timeout(const Duration(seconds: 15));
-
-        final result = _parseResponse(retry);
-
-        if (result.isSuccess) {
-          await _saveToLocal(result.products!);
-        }
-
-        return result;
-      }
+      final response = await ApiClient.get(
+        '/api/products?limit=$limit&offset=$offset&include_combos=true&session_id=$sessionId',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 15),
+      );
 
       final result = _parseResponse(response);
 
@@ -2374,7 +2345,7 @@ class _BlinkitCartBar extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.35),
+                            color: Colors.black.withValues(alpha: 0.35),
                             blurRadius: 16,
                             offset: const Offset(0, 6),
                           ),
@@ -2408,7 +2379,7 @@ class _BlinkitCartBar extends StatelessWidget {
                                 Text(
                                   '$totalCount ${totalCount == 1 ? 'item' : 'items'}',
                                   style: TextStyle(
-                                    color: Colors.white.withOpacity(0.8),
+                                    color: Colors.white.withValues(alpha: 0.8),
                                     fontSize: 12,
                                   ),
                                 ),

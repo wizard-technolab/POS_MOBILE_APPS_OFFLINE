@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:OdoCart/widgets/top_notification.dart';
+import 'package:odocart/widgets/top_notification.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../main.dart';
 import '../services/app_config.dart';
+import '../services/api_client.dart';
 import '../services/cart_service.dart';
 import '../services/db_helper.dart';
 import '../data/repositories/order_repository.dart';
@@ -111,15 +111,10 @@ class _PosSessionScreenState extends State<PosSessionScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchPosSessionsFromOdoo() async {
-    final url = await AppConfig.getServerUrl();
-    final token = await AppConfig.getApiToken();
-
-    if (url.isEmpty || token.isEmpty) return [];
-
-    final response = await http.get(
-      Uri.parse('$url/api/v1/pos-sessions'),
-      headers: {'Authorization': 'Bearer $token'},
-    ).timeout(const Duration(seconds: 10));
+    final response = await ApiClient.get(
+      '/api/v1/pos-sessions',
+      timeout: const Duration(seconds: 10),
+    );
 
     final data = jsonDecode(response.body);
 
@@ -461,10 +456,9 @@ class _PosSessionScreenState extends State<PosSessionScreen> {
       CartService.instance.clearCart();
     }
 
-    await AppConfig.saveApiToken('');
-    await AppConfig.saveApiEmail('');
-    await AppConfig.saveApiPassword('');
-    await AppConfig.saveUid(0);
+    // Clear only the current auth session. Keep saved email/password and
+    // subscription data so re-login does not ask for the subscription code again.
+    await AppConfig.clear();
 
     if (!mounted) return;
 

@@ -5,8 +5,8 @@
 // ─────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import '../services/app_config.dart';
-import 'package:OdoCart/models/combo_model.dart';
-import 'package:OdoCart/services/cart_service.dart';
+import 'package:odocart/models/combo_model.dart';
+import 'package:odocart/services/cart_service.dart';
 
 // ── Colors (same palette as the rest of the app) ──────────
 const _kBg = Color(0xFF0D0F1C);

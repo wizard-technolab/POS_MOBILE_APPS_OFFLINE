@@ -138,14 +138,14 @@ class _TopNotificationWidgetState extends State<_TopNotificationWidget>
                   borderRadius: BorderRadius.circular(14),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.45),
+                      color: Colors.black.withValues(alpha: 0.45),
                       blurRadius: 20,
                       spreadRadius: 1,
                       offset: const Offset(0, 6),
                     ),
                     // Subtle inner glow on top edge for depth
                     BoxShadow(
-                      color: Colors.white.withOpacity(0.04),
+                      color: Colors.white.withValues(alpha: 0.04),
                       blurRadius: 0,
                       spreadRadius: 0,
                       offset: const Offset(0, 1),
@@ -160,7 +160,7 @@ class _TopNotificationWidgetState extends State<_TopNotificationWidget>
                       Container(
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.12),
+                          color: Colors.white.withValues(alpha: 0.12),
                           shape: BoxShape.circle,
                         ),
                         child: Icon(

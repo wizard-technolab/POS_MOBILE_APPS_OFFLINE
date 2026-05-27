@@ -5,7 +5,7 @@ import 'dart:convert'; // For jsonEncode — used to encode variant_attributes l
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:OdoCart/widgets/top_notification.dart';
+import 'package:odocart/widgets/top_notification.dart';
 import 'package:uuid/uuid.dart';
 import '../main.dart';
 import '../services/odoo_service.dart';
@@ -495,10 +495,9 @@ class _SettingsScreenState extends State<SettingsScreen>
       CartService.instance.clearCart();
     }
 
-    await AppConfig.saveApiToken('');
-    await AppConfig.saveApiEmail('');
-    await AppConfig.saveApiPassword('');
-    await AppConfig.saveUid(0);
+    // Clear only the current auth session. Keep saved email/password and
+    // subscription data so re-login does not ask for the subscription code again.
+    await AppConfig.clear();
 
     if (!mounted) return;
 

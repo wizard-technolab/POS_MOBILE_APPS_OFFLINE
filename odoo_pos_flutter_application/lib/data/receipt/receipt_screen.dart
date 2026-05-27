@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:OdoCart/screens/orders_screen.dart';
-import 'package:OdoCart/services/app_config.dart';
+import 'package:odocart/screens/orders_screen.dart';
+import 'package:odocart/services/app_config.dart';
 import 'print_controller.dart';
 
 // ── Color Constants (match order_screen.dart) ──────────────────────────

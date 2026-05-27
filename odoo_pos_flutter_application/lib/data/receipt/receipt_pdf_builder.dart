@@ -15,10 +15,10 @@
 // receipt_pdf_builder.dart
 
 import 'package:flutter/foundation.dart';
-import 'package:OdoCart/data/repositories/order_repository.dart';
-import 'package:OdoCart/screens/orders_screen.dart';
-import 'package:OdoCart/services/app_config.dart'; // already imported ✅
-import 'package:OdoCart/services/odoo_service.dart';
+import 'package:odocart/data/repositories/order_repository.dart';
+import 'package:odocart/screens/orders_screen.dart';
+import 'package:odocart/services/app_config.dart'; // already imported ✅
+import 'package:odocart/services/odoo_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 

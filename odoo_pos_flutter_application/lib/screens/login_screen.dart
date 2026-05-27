@@ -2,9 +2,9 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:OdoCart/widgets/top_notification.dart';
-import 'package:OdoCart/screens/session_screen.dart';
-import 'package:OdoCart/screens/subscription_screen.dart';
+import 'package:odocart/widgets/top_notification.dart';
+import 'package:odocart/screens/session_screen.dart';
+import 'package:odocart/screens/subscription_screen.dart';
 import '../services/odoo_service.dart';
 import '../services/app_config.dart';
 import '../services/subscription_service.dart';
@@ -90,51 +90,115 @@ class _LoginScreenState extends State<LoginScreen> {
   /// offline/local validity. This must never clear a valid local subscription
   /// just because the server/ngrok/network is unavailable or returns a generic
   /// validation error during login.
+  /// Refresh saved subscription from the license server without breaking
+  /// offline/local validity. This must never clear a valid local subscription
+  /// just because the server/ngrok/network is unavailable or returns a generic
+  /// validation error during login.
   Future<void> _refreshSavedSubscriptionIfNeeded() async {
     final savedCode = await AppConfig.getSubscriptionCode();
-    if (savedCode.isEmpty) return;
+    if (savedCode.isEmpty) {
+      debugPrint('📭 No saved subscription code - skipping refresh');
+      return;
+    }
 
     final localStillValid = await AppConfig.isSubscriptionValid();
     final email = await AppConfig.getApiEmail();
 
-    // If the saved subscription is still valid locally, allow login to continue
-    // immediately. A failed refresh should not force the SubscriptionScreen.
-    if (localStillValid) {
-      final result = await SubscriptionService.validateLicenseCode(savedCode);
+    debugPrint(
+        '🔄 _refreshSavedSubscriptionIfNeeded: localStillValid=$localStillValid, email=$email');
 
-      if (result['status'] == 'success') {
-        await AppConfig.saveSubscriptionExpDate(result['exp_date']);
-        await AppConfig.saveSubscriptionEmail(email);
+    // ========================================================================
+    // CASE 1: Local subscription is STILL VALID
+    // ========================================================================
+    if (localStillValid) {
+      debugPrint(
+          '✅ Local subscription still valid - attempting online refresh');
+
+      try {
+        final statusResult =
+            await SubscriptionService.checkSavedSubscriptionStatus()
+                .timeout(const Duration(seconds: 5));
+
+        final result = statusResult['status'] == 'skipped'
+            ? await SubscriptionService.validateLicenseCode(savedCode)
+                .timeout(const Duration(seconds: 5))
+            : statusResult;
+
+        if (result['status'] == 'success') {
+          debugPrint('✅ Online refresh successful - updating expiry and token');
+          final expDate = result['exp_date']?.toString() ?? '';
+          if (expDate.isNotEmpty) {
+            await AppConfig.saveSubscriptionExpDate(expDate);
+          }
+          await AppConfig.saveSubscriptionEmail(email);
+          final licenseToken = result['license_token']?.toString() ?? '';
+          if (licenseToken.isNotEmpty) {
+            await AppConfig.saveSubscriptionLicenseToken(licenseToken);
+          }
+        } else {
+          debugPrint(
+              '⚠️  Online refresh returned non-success: ${result['status']}');
+          // ✅ FIX: Do NOT clear - keep the locally valid subscription
+        }
+      } catch (e) {
+        debugPrint('⚠️  Online refresh failed (likely network error): $e');
+        // ✅ FIX: Network timeout or error - keep the local valid subscription
+        // User can proceed offline with the locally valid subscription
       }
 
-      // Keep local subscription for all non-success refresh responses here.
-      // Server-side revocation can still be handled by background sync, but
-      // login must remain offline-capable.
+      // ✅ ALWAYS RETURN HERE - never force SubscriptionScreen if local is valid
       return;
     }
 
-    // Local subscription is missing/expired. Try online validation once.
-    final result = await SubscriptionService.validateLicenseCode(savedCode);
+    // ========================================================================
+    // CASE 2: Local subscription is MISSING or EXPIRED
+    // ========================================================================
+    debugPrint(
+        '❌ Local subscription missing/expired - attempting online validation');
 
-    if (result['status'] == 'success') {
-      await AppConfig.saveSubscriptionExpDate(result['exp_date']);
-      await AppConfig.saveSubscriptionEmail(email);
-      await AppConfig.markFirstLaunchComplete();
-      return;
+    try {
+      final result = await SubscriptionService.validateLicenseCode(savedCode)
+          .timeout(const Duration(seconds: 10));
+
+      if (result['status'] == 'success') {
+        debugPrint('✅ Online validation successful - saving expiry and token');
+        final expDate = result['exp_date']?.toString() ?? '';
+        if (expDate.isNotEmpty) {
+          await AppConfig.saveSubscriptionExpDate(expDate);
+        }
+        await AppConfig.saveSubscriptionEmail(email);
+        final licenseToken = result['license_token']?.toString() ?? '';
+        if (licenseToken.isNotEmpty) {
+          await AppConfig.saveSubscriptionLicenseToken(licenseToken);
+        }
+        await AppConfig.markFirstLaunchComplete();
+        return;
+      }
+
+      final message = (result['message'] ?? '').toString().toLowerCase();
+
+      // ✅ FIX: Extended error detection for network issues
+      if (message.contains('connection') ||
+          message.contains('server') ||
+          message.contains('timeout') ||
+          message.contains('network') ||
+          message.contains('unreachable') ||
+          message.contains('refused') ||
+          message.contains('econnrefused')) {
+        debugPrint(
+            '⚠️  Backend unavailable ($message) - cannot validate but keeping code for offline');
+        // ✅ FIX: Do NOT clear - user may be offline and can try again later
+        return;
+      }
+
+      // Only clear when explicitly rejected by backend
+      debugPrint('❌ Backend explicitly rejected subscription: $message');
+      await AppConfig.clearSubscription();
+    } catch (e) {
+      debugPrint('⚠️  Validation request failed: $e');
+      // Network timeout or other error - do not clear
+      // User will see SubscriptionScreen but can try again when online
     }
-
-    final message = (result['message'] ?? '').toString().toLowerCase();
-    if (message.contains('connection') ||
-        message.contains('server') ||
-        message.contains('timeout') ||
-        message.contains('network')) {
-      // Backend unavailable: do not clear saved subscription data.
-      return;
-    }
-
-    // Only clear when local subscription is already invalid and backend also
-    // rejects it explicitly.
-    await AppConfig.clearSubscription();
   }
 
   // Show a styled dialog for backend errors like "No POS access"
@@ -366,10 +430,17 @@ class _LoginScreenState extends State<LoginScreen> {
       final hadValidSubscriptionBeforeRefresh =
           await AppConfig.isSubscriptionValid();
 
+      debugPrint(
+          '🔍 Post-login: subscription was valid before refresh? $hadValidSubscriptionBeforeRefresh');
+
+      // Attempt to refresh subscription (won't break offline subscriptions)
       await _refreshSavedSubscriptionIfNeeded();
 
       final hasValidSubscription = await AppConfig.isSubscriptionValid();
       final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
+
+      debugPrint(
+          '🔍 Post-login: subscription valid after refresh? $hasValidSubscription, first launch? $isFirstLaunch');
 
       // If this install already has a valid local subscription, never force the
       // subscription screen just because it is the first route after re-login.
@@ -377,16 +448,20 @@ class _LoginScreenState extends State<LoginScreen> {
       // appearing again after logout/login.
       if (hasValidSubscription &&
           (hadValidSubscriptionBeforeRefresh || isFirstLaunch)) {
+        debugPrint('✅ Marking first launch as complete');
         await AppConfig.markFirstLaunchComplete();
       }
 
       if (!hasValidSubscription) {
+        debugPrint(
+            '⚠️  Navigating to SubscriptionScreen - subscription not valid');
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => const SubscriptionScreen(),
           ),
         );
       } else {
+        debugPrint('✅ Navigating to PosSessionScreen - subscription valid');
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => const PosSessionScreen(),
@@ -438,7 +513,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 20),
                     const Text(
-                      'OdoCart Login',
+                      'odocart Login',
                       style: TextStyle(
                         color: kTextPrimary,
                         fontSize: 28,

@@ -1,7 +1,7 @@
 ﻿import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:OdoCart/widgets/top_notification.dart';
-import 'package:OdoCart/data/repositories/order_repository.dart';
+import 'package:odocart/widgets/top_notification.dart';
+import 'package:odocart/data/repositories/order_repository.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../../../services/app_config.dart';

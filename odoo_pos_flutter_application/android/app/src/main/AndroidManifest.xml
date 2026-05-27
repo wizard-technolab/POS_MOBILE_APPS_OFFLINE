@@ -8,19 +8,8 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30"/>
-    <application
-        android:label="OdoCart"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false"
-        android:fullBackupContent="false"
-        android:usesCleartextTraffic="false"
-        android:networkSecurityConfig="@xml/network_security_config"
-        tools:replace="android:allowBackup,android:fullBackupContent,android:usesCleartextTraffic">
-        <!-- Explicitly enable Impeller to ensure smooth rendering and avoid deprecation warnings -->
-        <meta-data
-            android:name="io.flutter.embedding.android.EnableImpeller"
-            android:value="true" />
+    <application android:name="${applicationName}" android:label="odocart" android:icon="@mipmap/ic_launcher" android:allowBackup="false" android:fullBackupContent="false" android:usesCleartextTraffic="false" tools:replace="android:allowBackup,android:fullBackupContent,android:usesCleartextTraffic">        <!-- Explicitly enable Impeller to ensure smooth rendering and avoid deprecation warnings -->
+        <meta-data android:name="io.flutter.embedding.android.EnableImpeller" android:value="true" />
 
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:theme="@style/LaunchTheme" android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode" android:hardwareAccelerated="true" android:windowSoftInputMode="adjustResize">
             <!-- Specifies an Android theme to apply to this Activity as soon as

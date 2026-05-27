@@ -6,6 +6,7 @@ import '../models/user_model.dart';
 import '../models/sync_model.dart';
 import 'app_config.dart';
 import 'db_helper.dart';
+import 'api_client.dart';
 
 // Format millisecond timestamp to readable string like "05 May 2026, 10:30 AM"
 String _formatTimestamp(dynamic raw) {
@@ -210,29 +211,14 @@ class OdooService {
 
   static Future<List<Map<String, dynamic>>> fetchOrderLines(int orderId,
       {int? sessionId}) async {
-    final url = await baseUrl;
-    String token = await _getToken();
-
     // Only append session_id if valid to avoid URL string "null"
     final sessionParam =
         (sessionId != null && sessionId > 0) ? '?session_id=$sessionId' : '';
 
-    var response = await http.get(
-      Uri.parse('$url/api/order/$orderId/lines$sessionParam'),
-      headers: {'Authorization': 'Bearer $token'},
-    ).timeout(const Duration(seconds: 15));
-
-    // Token expired — re-auth once and retry
-    if (response.statusCode == 401) {
-      _token = null;
-      await AppConfig.saveApiToken('');
-      token = await _getToken();
-
-      response = await http.get(
-        Uri.parse('$url/api/order/$orderId/lines$sessionParam'),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 15));
-    }
+    final response = await ApiClient.get(
+      '/api/order/$orderId/lines$sessionParam',
+      timeout: const Duration(seconds: 15),
+    );
 
     // Safety check — if response is HTML (not JSON), throw a clear error
     final contentType = response.headers['content-type'] ?? '';
@@ -263,9 +249,6 @@ class OdooService {
     int limit = 100,
     int? sessionId, // Add this parameter
   }) async {
-    final url = await baseUrl;
-    String token = await _getToken();
-
     // ── Session isolation check ──
     // To prevent mixing orders from different POS sessions (e.g., Restaurant vs
     // Clothes Shop), we must never fetch orders without a session ID filter.
@@ -285,24 +268,10 @@ class OdooService {
     final sessionParam = sessionId > 0 ? '&session_id=$sessionId' : '';
     final fieldsParam = '&fields=company_id'; // Explicitly request company_id
 
-    var response = await http.get(
-      Uri.parse(
-          '$url/api/orders?limit=$limit$filterParam$sessionParam$fieldsParam'),
-      headers: {'Authorization': 'Bearer $token'},
-    ).timeout(const Duration(seconds: 15));
-
-    // 401 → token expire → re-auth once and retry
-    if (response.statusCode == 401) {
-      _token = null;
-      await AppConfig.saveApiToken('');
-      token = await _getToken();
-
-      response = await http.get(
-        Uri.parse(
-            '$url/api/orders?limit=$limit$filterParam$sessionParam$fieldsParam'),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 15));
-    }
+    final response = await ApiClient.get(
+      '/api/orders?limit=$limit$filterParam$sessionParam$fieldsParam',
+      timeout: const Duration(seconds: 15),
+    );
 
     final data = jsonDecode(response.body);
 
@@ -337,30 +306,16 @@ class OdooService {
   // ─────────────────────────────────────────────────────────────────────────
   static Future<List<Map<String, dynamic>>> fetchPendingOrders(
       {int? sessionId}) async {
-    final url = await baseUrl;
-    String token = await _getToken();
-
     if (sessionId == null || sessionId <= 0) {
       debugPrint('⚠️ fetchPendingOrders: no active session, skipping.');
       return [];
     }
 
     try {
-      var response = await http.get(
-        Uri.parse('$url/api/orders/pending?session_id=$sessionId&limit=100'),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 15));
-
-      // Token expired → re-auth once and retry
-      if (response.statusCode == 401) {
-        _token = null;
-        await AppConfig.saveApiToken('');
-        token = await _getToken();
-        response = await http.get(
-          Uri.parse('$url/api/orders/pending?session_id=$sessionId&limit=100'),
-          headers: {'Authorization': 'Bearer $token'},
-        ).timeout(const Duration(seconds: 15));
-      }
+      final response = await ApiClient.get(
+        '/api/orders/pending?session_id=$sessionId&limit=100',
+        timeout: const Duration(seconds: 15),
+      );
 
       final data = jsonDecode(response.body);
 
@@ -384,10 +339,11 @@ class OdooService {
   // ─────────────────────────────────────────────────────────────────────────
   static Future<bool> checkConnection() async {
     try {
-      final url = await baseUrl;
-      final response = await http
-          .get(Uri.parse('$url/web/health'))
-          .timeout(const Duration(seconds: 5));
+      final response = await ApiClient.get(
+        '/web/health',
+        authenticated: false,
+        timeout: const Duration(seconds: 5),
+      );
       return response.statusCode == 200;
     } catch (_) {
       return false;

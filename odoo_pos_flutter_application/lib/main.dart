@@ -3,8 +3,8 @@
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
-import 'package:OdoCart/screens/session_screen.dart';
-import 'package:OdoCart/screens/subscription_screen.dart';
+import 'package:odocart/screens/session_screen.dart';
+import 'package:odocart/screens/subscription_screen.dart';
 import 'screens/product_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/cart_screen.dart';
@@ -76,37 +76,43 @@ class _AuthGateState extends State<AuthGate> {
 
   Future<Widget> _determineRoute() async {
     // ─── STEP 1: Check if user is logged in ───
+    final uid = await AppConfig.getUid();
     final isLoggedIn = await AppConfig.isLoggedIn();
 
     if (!isLoggedIn) {
-      debugPrint('❌ Not logged in → LoginScreen');
+      debugPrint('❌ AuthGate: Not logged in (UID=$uid) → LoginScreen');
       return const LoginScreen();
     }
 
-    debugPrint('✅ Logged in, checking subscription...');
+    debugPrint('✅ AuthGate: Logged in (UID=$uid), checking subscription...');
 
     // ─── STEP 2: Check subscription (OFFLINE-CAPABLE) ───
     // This checks locally saved exp_date vs current device date
-    final isFirstLaunch = await AppConfig.isFirstLaunchAfterInstall();
+    final subCode = await AppConfig.getSubscriptionCode();
+    final subExpDate = await AppConfig.getSubscriptionExpDate();
+    final subEmail = await AppConfig.getSubscriptionEmail();
+    final apiEmail = await AppConfig.getApiEmail();
+
     final hasValidSubscription = await AppConfig.isSubscriptionValid();
 
-    if (isFirstLaunch || !hasValidSubscription) {
-      debugPrint(
-          '⚠️ First launch or expired subscription → SubscriptionScreen');
+    if (!hasValidSubscription) {
+      debugPrint('⚠️ AuthGate: Invalid subscription → SubscriptionScreen');
+      debugPrint('   Code: $subCode, ExpDate: $subExpDate');
+      debugPrint('   SubEmail: $subEmail, ApiEmail: $apiEmail');
       return const SubscriptionScreen();
     }
 
-    debugPrint('✅ Subscription valid, checking session...');
+    debugPrint('✅ AuthGate: Subscription valid, checking session...');
 
     // ─── STEP 3: Check if POS session is selected ───
     final sessionId = await AppConfig.getPosSessionId();
 
     if (sessionId <= 0) {
-      debugPrint('⚠️ No session selected → PosSessionScreen');
+      debugPrint('⚠️ AuthGate: No session selected → PosSessionScreen');
       return const PosSessionScreen();
     }
 
-    debugPrint('✅ Session selected (ID: $sessionId) → MainShell');
+    debugPrint('✅ AuthGate: Session selected (ID: $sessionId) → MainShell');
     return const MainShell();
   }
 
@@ -325,8 +331,9 @@ class _MainShellState extends State<MainShell> {
       // As long as the user has visited more than one tab, back button pops tabs, not the app.
       canPop: _tabHistory.length <= 1,
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop)
+        if (didPop) {
           return; // system already handled it (history empty → app exit)
+        }
         // Pop the current tab from history and go back to the previous one
         setState(() {
           _tabHistory.removeLast();

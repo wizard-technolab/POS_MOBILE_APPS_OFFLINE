@@ -5,12 +5,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart';
 
 import 'app_config.dart';
 import 'db_helper.dart';
 import 'odoo_service.dart';
+import 'api_client.dart';
 import '../data/repositories/product_repository.dart';
 import '../data/repositories/order_repository.dart';
 import '../data/repositories/customer_repository.dart';
@@ -142,13 +142,11 @@ class DeltaSyncManager {
           ? '?include_combos=true&session_id=$sessionId'
           : '?include_combos=true';
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/products/ids$queryString'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await ApiClient.get(
+        '/api/products/ids$queryString',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 10),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);
@@ -184,13 +182,11 @@ class DeltaSyncManager {
       final idsParam = productIds.join(',');
       final sessionParam = sessionId > 0 ? '&session_id=$sessionId' : '';
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/products/by-ids?ids=$idsParam$sessionParam'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
+      final response = await ApiClient.get(
+        '/api/products/by-ids?ids=$idsParam$sessionParam',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 30),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);
@@ -317,9 +313,7 @@ class DeltaSyncManager {
           final odooId = (order['odoo_order_id'] as num?)?.toInt() ?? 0;
 
           // If order exists on Odoo (restored draft), use /pay endpoint to update items & pay
-          final url = (odooId > 0)
-              ? '$baseUrl/api/order/$odooId/pay'
-              : '$baseUrl/api/order';
+          final path = (odooId > 0) ? '/api/order/$odooId/pay' : '/api/order';
 
           final payload = {
             'name': order['name'], // ✅ Send custom device-generated name
@@ -351,16 +345,12 @@ class DeltaSyncManager {
             ],
           };
 
-          final response = await http
-              .post(
-                Uri.parse(url),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode(payload),
-              )
-              .timeout(const Duration(seconds: 30));
+          final response = await ApiClient.post(
+            path,
+            headers: {'Content-Type': 'application/json'},
+            body: payload,
+            timeout: const Duration(seconds: 30),
+          );
 
           if (response.statusCode == 200 || response.statusCode == 201) {
             final data = jsonDecode(response.body);
@@ -432,9 +422,9 @@ class DeltaSyncManager {
           final hasExternalId = externalId.isNotEmpty;
 
           // Endpoint choice: use server ID for backend orders, external ID for app-originated ones.
-          final url = (odooId > 0 && !hasExternalId)
-              ? '$baseUrl/api/order/$odooId/draft'
-              : '$baseUrl/api/order/draft';
+          final path = (odooId > 0 && !hasExternalId)
+              ? '/api/order/$odooId/draft'
+              : '/api/order/draft';
 
           final payload = {
             if (hasExternalId) 'external_id': externalId,
@@ -464,16 +454,12 @@ class DeltaSyncManager {
                 .toList(),
           };
 
-          final response = await http
-              .post(
-                Uri.parse(url),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode(payload),
-              )
-              .timeout(const Duration(seconds: 30));
+          final response = await ApiClient.post(
+            path,
+            headers: {'Content-Type': 'application/json'},
+            body: payload,
+            timeout: const Duration(seconds: 30),
+          );
 
           if (response.statusCode == 200 || response.statusCode == 201) {
             final data = jsonDecode(response.body);
@@ -560,16 +546,12 @@ class DeltaSyncManager {
                 .toList(),
           };
 
-          final response = await http
-              .post(
-                Uri.parse('$baseUrl/api/order/cancel'),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode(payload),
-              )
-              .timeout(const Duration(seconds: 30));
+          final response = await ApiClient.post(
+            '/api/order/cancel',
+            headers: {'Content-Type': 'application/json'},
+            body: payload,
+            timeout: const Duration(seconds: 30),
+          );
 
           if (response.statusCode == 200 || response.statusCode == 201) {
             // Mark as synced so it won't be re-uploaded next time
@@ -611,14 +593,11 @@ class DeltaSyncManager {
 
       final sessionParam = sessionId > 0 ? '&session_id=$sessionId' : '';
       // Fetch orders from server since last sync
-      final response = await http.get(
-        Uri.parse(
-            '$baseUrl/api/orders/since?timestamp=${lastSyncTime.millisecondsSinceEpoch}$sessionParam'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
+      final response = await ApiClient.get(
+        '/api/orders/since?timestamp=${lastSyncTime.millisecondsSinceEpoch}$sessionParam',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 30),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);
@@ -813,13 +792,11 @@ class DeltaSyncManager {
       final localAuthData = await _getLocalAuthDataHash();
 
       // Fetch from server
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/auth/profile'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await ApiClient.get(
+        '/api/auth/profile',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 10),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);
@@ -1093,23 +1070,17 @@ class DeltaSyncManager {
             'email': customer['email'] ?? '',
           };
 
-          final url = isNew
-              ? '$baseUrl/api/customers/create'
-              : '$baseUrl/api/customers/$localId/update';
+          final path = isNew
+              ? '/api/customers/create'
+              : '/api/customers/$localId/update';
 
           final response = await (isNew
-                  ? http.post(Uri.parse(url),
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer $token'
-                      },
-                      body: jsonEncode(payload))
-                  : http.put(Uri.parse(url),
-                      headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer $token'
-                      },
-                      body: jsonEncode(payload)))
+                  ? ApiClient.post(path,
+                      headers: {'Content-Type': 'application/json'},
+                      body: payload)
+                  : ApiClient.put(path,
+                      headers: {'Content-Type': 'application/json'},
+                      body: payload))
               .timeout(const Duration(seconds: 15));
 
           final statusCode = response.statusCode;
@@ -1188,13 +1159,11 @@ class DeltaSyncManager {
   /// Get all customer IDs from server (quick ID list)
   Future<List<int>> _getServerCustomerIds(String baseUrl, String token) async {
     try {
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/customers/ids'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 10));
+      final response = await ApiClient.get(
+        '/api/customers/ids',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 10),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);
@@ -1222,13 +1191,11 @@ class DeltaSyncManager {
       if (customerIds.isEmpty) return [];
 
       final idsParam = customerIds.join(',');
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/customers/by-ids?ids=$idsParam'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
-      ).timeout(const Duration(seconds: 30));
+      final response = await ApiClient.get(
+        '/api/customers/by-ids?ids=$idsParam',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 30),
+      );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body);

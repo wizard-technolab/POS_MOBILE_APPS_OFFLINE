@@ -15,7 +15,6 @@ import 'delta_sync_manager.dart';
 
 class SyncManager extends ChangeNotifier {
   // ── Repositories ──────────────────────────────────────
-  final ProductRepository _productRepo = ProductRepository();
   final OrderRepository _orderRepo = OrderRepository();
 
   // ── Public observable state ───────────────────────────

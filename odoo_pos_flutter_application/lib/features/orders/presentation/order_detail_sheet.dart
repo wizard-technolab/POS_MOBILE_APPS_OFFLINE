@@ -1,6 +1,6 @@
 ﻿import 'dart:convert';
 
-import 'package:OdoCart/screens/product_screen.dart';
+import 'package:odocart/screens/product_screen.dart';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/customer_repository.dart';
 import '../../../services/cart_service.dart';

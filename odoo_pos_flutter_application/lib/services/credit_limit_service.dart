@@ -15,8 +15,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import 'dart:convert';
-import 'package:http/http.dart' as http;
-import '../services/app_config.dart'; // provides baseUrl + token
+import 'api_client.dart';
 
 // ── Enum: result of a credit check ───────────────────────────
 enum CreditStatus {
@@ -77,19 +76,11 @@ class CreditLimitService {
   /// in that case the caller should proceed without blocking the sale.
   static Future<CustomerCreditInfo?> fetchCreditInfo(int customerId) async {
     try {
-      final baseUrl = await AppConfig.getServerUrl();
-      final token = await AppConfig.getApiToken();
-
-      if (baseUrl.isEmpty || token.isEmpty) return null;
-
-      final uri = Uri.parse('$baseUrl/api/customer/$customerId/credit');
-      final response = await http.get(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      ).timeout(const Duration(seconds: 8));
+      final response = await ApiClient.get(
+        '/api/customer/$customerId/credit',
+        headers: {'Content-Type': 'application/json'},
+        timeout: const Duration(seconds: 8),
+      );
 
       if (response.statusCode != 200) return null;
 

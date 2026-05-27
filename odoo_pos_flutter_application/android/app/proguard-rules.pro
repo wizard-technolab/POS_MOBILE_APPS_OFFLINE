@@ -7,4 +7,4 @@
 -keep class io.flutter.plugins.** { *; }
 
 # Keep your Activity class name stable for Android startup.
--keep class com.example.OdoCart.MainActivity { *; }
+-keep class com.example.odocart.MainActivity { *; }

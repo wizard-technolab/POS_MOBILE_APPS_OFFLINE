@@ -1,4 +1,4 @@
-package com.example.OdoCart
+package com.warlocktechnologies.odocart
 
 import android.os.Build
 import android.os.Bundle

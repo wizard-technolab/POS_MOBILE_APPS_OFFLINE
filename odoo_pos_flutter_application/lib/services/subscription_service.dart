@@ -96,6 +96,8 @@ class SubscriptionService {
           'exp_date': data['data']['exp_date'],
           'days_remaining': data['data']['days_remaining'],
           'message': data['message'] ?? 'License activated successfully',
+          'license_token':
+              data['data']['license_token'] ?? data['license_token'],
         };
       } else {
         return {
@@ -113,6 +115,44 @@ class SubscriptionService {
         'status': 'error',
         'message': 'Connection error: $e',
       };
+    }
+  }
+
+  /// Check saved subscription status from backend when a license token is available.
+  /// This is optional and should not block offline login when the server is unavailable.
+  static Future<Map<String, dynamic>> checkSavedSubscriptionStatus() async {
+    try {
+      final licenseToken = await AppConfig.getSubscriptionLicenseToken();
+      if (licenseToken.isEmpty) {
+        return {'status': 'skipped', 'message': 'No license token saved'};
+      }
+
+      final response = await http.get(
+        Uri.parse('$_licenseServerUrl/api/v1/subscription/status'),
+        headers: {
+          'Authorization': 'Bearer $licenseToken',
+          'ngrok-skip-browser-warning': 'true',
+        },
+      ).timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        final payload = data['data'] ?? data;
+        if (payload['exp_date'] != null) {
+          await AppConfig.saveSubscriptionExpDate(payload['exp_date']);
+        }
+        if (payload['email'] != null) {
+          await AppConfig.saveSubscriptionEmail(payload['email']);
+        }
+        return {'status': 'success', 'data': payload};
+      }
+
+      return {
+        'status': 'error',
+        'message': data['message'] ?? 'Subscription status check failed',
+      };
+    } catch (e) {
+      return {'status': 'error', 'message': 'Connection error: $e'};
     }
   }
 

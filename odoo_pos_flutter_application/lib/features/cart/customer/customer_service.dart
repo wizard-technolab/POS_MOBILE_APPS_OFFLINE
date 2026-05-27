@@ -1,10 +1,10 @@
 import 'dart:convert';
 
-import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 
 import '../../../data/repositories/customer_repository.dart';
 import '../../../services/app_config.dart';
+import '../../../services/api_client.dart';
 import '../../../services/db_helper.dart';
 
 /// Customer search, cache, and Odoo API orchestration.
@@ -18,19 +18,18 @@ class CustomerService {
     final local = await searchLocal(query);
 
     try {
-      final baseUrl = await AppConfig.getServerUrl();
       final token = await AppConfig.getApiToken();
 
-      if (baseUrl.isEmpty || token.isEmpty) {
+      if (token.isEmpty) {
         throw Exception('Offline mode');
       }
 
       final q = query.isEmpty ? '' : '&query=${Uri.encodeComponent(query)}';
 
-      final response = await http.get(
-        Uri.parse('$baseUrl/api/customers/search?all=1$q'),
-        headers: {'Authorization': 'Bearer $token'},
-      ).timeout(const Duration(seconds: 8));
+      final response = await ApiClient.get(
+        '/api/customers/search?all=1$q',
+        timeout: const Duration(seconds: 8),
+      );
 
       final data = jsonDecode(response.body);
 
@@ -70,13 +69,14 @@ class CustomerService {
   }
 
   Future<bool> checkServerOnline() async {
-    final baseUrl = await AppConfig.getServerUrl();
     final token = await AppConfig.getApiToken();
-    if (baseUrl.isEmpty || token.isEmpty) return false;
+    if (token.isEmpty) return false;
     try {
-      final healthCheck = await http
-          .get(Uri.parse('$baseUrl/web/health'))
-          .timeout(const Duration(seconds: 5));
+      final healthCheck = await ApiClient.get(
+        '/web/health',
+        authenticated: false,
+        timeout: const Duration(seconds: 5),
+      );
       return healthCheck.statusCode == 200;
     } catch (_) {
       return false;
@@ -106,25 +106,18 @@ class CustomerService {
 
     int savedId = 0;
     final isOnline = await checkServerOnline();
-    final baseUrl = await AppConfig.getServerUrl();
     final token = await AppConfig.getApiToken();
 
-    if (isOnline && baseUrl.isNotEmpty && token.isNotEmpty) {
+    if (isOnline && token.isNotEmpty) {
       try {
-        http.Response response;
-
         if (isEdit) {
           final id = existing['id'] as int;
-          response = await http
-              .put(
-                Uri.parse('$baseUrl/api/customers/$id/update'),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode(body),
-              )
-              .timeout(const Duration(seconds: 10));
+          final response = await ApiClient.put(
+            '/api/customers/$id/update',
+            headers: {'Content-Type': 'application/json'},
+            body: body,
+            timeout: const Duration(seconds: 10),
+          );
 
           final data = jsonDecode(response.body);
           final isSuccess = data['status'] == 'success' ||
@@ -148,16 +141,12 @@ class CustomerService {
             savedId = id;
           }
         } else {
-          response = await http
-              .post(
-                Uri.parse('$baseUrl/api/customers/create'),
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': 'Bearer $token',
-                },
-                body: jsonEncode(body),
-              )
-              .timeout(const Duration(seconds: 10));
+          final response = await ApiClient.post(
+            '/api/customers/create',
+            headers: {'Content-Type': 'application/json'},
+            body: body,
+            timeout: const Duration(seconds: 10),
+          );
 
           final data = jsonDecode(response.body);
           final isSuccess = data['status'] == 'success' ||

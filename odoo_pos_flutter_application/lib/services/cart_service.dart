@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
-import 'package:OdoCart/screens/product_screen.dart'; // for ProductModel
-import 'package:OdoCart/models/combo_model.dart';
+import 'package:odocart/screens/product_screen.dart'; // for ProductModel
+import 'package:odocart/models/combo_model.dart';
 import 'package:uuid/uuid.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dart:convert';

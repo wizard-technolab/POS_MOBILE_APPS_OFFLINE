@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:OdoCart/services/odoo_service.dart'; // Import OdooService
+import 'package:odocart/services/odoo_service.dart'; // Import OdooService
 import 'package:sqflite/sqflite.dart';
 import '../../services/db_helper.dart';
 import 'package:flutter/foundation.dart';

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'secure_storage_service.dart';
@@ -34,7 +35,15 @@ class AppConfig {
   static const _keySubscriptionCode = 'subscription_code';
   static const _keySubscriptionExpDate = 'subscription_exp_date';
   static const _keySubscriptionEmail = 'subscription_email';
+  static const _keySubscriptionLicenseToken = 'subscription_license_token';
   static const _keyFirstLaunchAfterInstall = 'first_launch_after_install';
+
+  /// Shared in-flight token refresh.
+  ///
+  /// When several API calls detect an expired JWT/401 at the same time, they all
+  /// await this same future instead of calling `/api/v1/auth` separately.
+  static Future<String>? _refreshingApiToken;
+
   static Future<String> _getSecureString(String key) async {
     return await SecureStorageService.read(key) ?? '';
   }
@@ -86,8 +95,100 @@ class AppConfig {
   }
 
   // ── JWT API Token ────────────────────────────
-  static Future<String> getApiToken() async {
+  /// Returns a usable JWT token.
+  ///
+  /// Existing code across the app calls this method before making Odoo API
+  /// requests. Keeping the refresh logic here makes token recovery central and
+  /// backward-compatible with those existing call sites.
+  static Future<String> getApiToken({bool refreshIfNeeded = true}) async {
+    final token = await _getSecureString(_keyApiToken);
+
+    if (!refreshIfNeeded) return token;
+
+    if (token.isNotEmpty && !isJwtExpired(token)) {
+      return token;
+    }
+
+    return refreshApiToken();
+  }
+
+  /// Returns the stored JWT exactly as saved, without attempting refresh.
+  static Future<String> getRawApiToken() async {
     return _getSecureString(_keyApiToken);
+  }
+
+  /// Re-authenticates using the saved Odoo credentials and stores a fresh JWT.
+  ///
+  /// This app's backend does not currently expose a separate refresh-token
+  /// endpoint, so refresh means secure auto re-login using saved credentials.
+  ///
+  /// A refresh guard is used so parallel expired-token requests share one
+  /// authentication request instead of firing multiple `/api/v1/auth` calls.
+  static Future<String> refreshApiToken() async {
+    final inFlightRefresh = _refreshingApiToken;
+    if (inFlightRefresh != null) {
+      return inFlightRefresh;
+    }
+
+    final refreshFuture = _refreshApiTokenInternal();
+    _refreshingApiToken = refreshFuture;
+
+    try {
+      return await refreshFuture;
+    } finally {
+      if (identical(_refreshingApiToken, refreshFuture)) {
+        _refreshingApiToken = null;
+      }
+    }
+  }
+
+  static Future<String> _refreshApiTokenInternal() async {
+    final serverUrl = await getServerUrl();
+    final email = await getApiEmail();
+    final password = await getApiPassword();
+
+    if (serverUrl.isEmpty || email.isEmpty || password.isEmpty) {
+      await clearApiToken();
+      return '';
+    }
+
+    final deviceCode = await getDeviceCode();
+
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$serverUrl/api/v1/auth'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'email': email,
+              'password': password,
+              if (deviceCode.isNotEmpty) 'device_code': deviceCode,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200 &&
+          data is Map<String, dynamic> &&
+          data['status'] == 'success' &&
+          data['token'] != null) {
+        final freshToken = data['token'].toString();
+        await saveApiToken(freshToken);
+
+        final rawUid = data['user_id'];
+        if (rawUid is int && rawUid > 0) {
+          await saveUid(rawUid);
+        }
+
+        return freshToken;
+      }
+    } catch (_) {
+      // Keep callers stable: an empty token lets existing screens show their
+      // current connection/authentication error handling.
+    }
+
+    await clearApiToken();
+    return '';
   }
 
   static Future<void> saveApiToken(String token) async {
@@ -177,9 +278,11 @@ class AppConfig {
 
   static Future<bool> isLoggedIn() async {
     final uid = await getUid();
-    final token = await getApiToken();
 
-    return uid > 0 && token.isNotEmpty;
+    // Login state must not depend on the JWT being present or unexpired.
+    // JWT expiry should trigger re-auth/refresh, not force the user back
+    // through subscription activation.
+    return uid > 0;
   }
 
 // ── POS Session ──────────────────────────────────
@@ -283,8 +386,21 @@ class AppConfig {
     await _saveSecureString(_keySubscriptionEmail, email.trim().toLowerCase());
   }
 
+  static Future<String> getSubscriptionLicenseToken() async {
+    return _getSecureString(_keySubscriptionLicenseToken);
+  }
+
+  static Future<void> saveSubscriptionLicenseToken(String token) async {
+    await _saveSecureString(_keySubscriptionLicenseToken, token.trim());
+  }
+
   /// Check if subscription is valid LOCALLY (works offline).
   /// Compares stored expiration date against current device date.
+  ///
+  /// Email validation logic:
+  /// - If currentEmail is empty (offline mode): Allow subscription check to continue
+  /// - If both emails exist: Must match (case-insensitive)
+  /// - If only savedEmail exists: Allow (offline scenario)
   static Future<bool> isSubscriptionValid() async {
     final code = await getSubscriptionCode();
     final expDateStr = await getSubscriptionExpDate();
@@ -293,13 +409,23 @@ class AppConfig {
 
     // No subscription data saved → not valid
     if (code.isEmpty || expDateStr.isEmpty) {
+      debugPrint('❌ isSubscriptionValid: No subscription data found');
       return false;
     }
 
-    if (savedEmail.isNotEmpty &&
-        currentEmail.isNotEmpty &&
-        savedEmail.toLowerCase() != currentEmail.toLowerCase()) {
-      return false;
+    // ✅ FIX: Improved email validation logic
+    // Only validate email match if BOTH emails are present
+    // Allow offline mode where currentEmail may not be loaded yet
+    if (savedEmail.isNotEmpty && currentEmail.isNotEmpty) {
+      if (savedEmail.toLowerCase() != currentEmail.toLowerCase()) {
+        debugPrint(
+            '❌ isSubscriptionValid: Email mismatch - saved: $savedEmail, current: $currentEmail');
+        return false;
+      }
+    } else if (savedEmail.isNotEmpty && currentEmail.isEmpty) {
+      debugPrint(
+          '⚠️  isSubscriptionValid: currentEmail empty but savedEmail exists - allowing check (offline mode?)');
+      // Allow the check to continue - offline mode may not have loaded email yet
     }
 
     try {
@@ -311,8 +437,18 @@ class AppConfig {
       final todayOnly = DateTime(today.year, today.month, today.day);
 
       // Valid if expiration is today or in the future
-      return !expDateOnly.isBefore(todayOnly);
-    } catch (_) {
+      final isValid = !expDateOnly.isBefore(todayOnly);
+      if (isValid) {
+        debugPrint(
+            '✅ isSubscriptionValid: Subscription is VALID until $expDateStr');
+      } else {
+        debugPrint(
+            '❌ isSubscriptionValid: Subscription EXPIRED on $expDateStr');
+      }
+      return isValid;
+    } catch (e) {
+      debugPrint(
+          '❌ isSubscriptionValid: Failed to parse expiration date: $expDateStr, error: $e');
       return false;
     }
   }
@@ -349,17 +485,30 @@ class AppConfig {
     await _removeSecureString(_keySubscriptionCode);
     await _removeSecureString(_keySubscriptionExpDate);
     await _removeSecureString(_keySubscriptionEmail);
+    await _removeSecureString(_keySubscriptionLicenseToken);
     subscriptionValidNotifier.value = false;
   }
 
   /// Clear auth tokens only (keep server_url, email, password, subscription)
+  /// Clear auth tokens only (keep server_url, email, password, subscription)
+  /// This allows re-login with saved credentials and offline subscription validation.
   static Future<void> clear() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyUid);
     await _removeSecureString(_keyApiToken);
-    // Intentionally keep:
-    // server_url, email, password → for re-login
-    // subscription_code, subscription_exp_date → for offline expiry check
+
+    debugPrint('🔐 AppConfig.clear(): Removed UID & API token');
+    debugPrint(
+        '✅ Preserved: server_url, api_email, api_password, subscription data');
+
+    // Intentionally KEEP these fields for re-login and offline scenarios:
+    // - _keyServerUrl → server address for next login
+    // - _keyApiEmail → email for subscription validation match
+    // - _keyApiPassword → password for next login
+    // - _keySubscriptionCode → license code for offline expiry check
+    // - _keySubscriptionExpDate → expiry date for offline expiry check
+    // - _keySubscriptionEmail → email subscription was tied to
+    // - _keySubscriptionLicenseToken → license token for re-validation
   }
 
   // Save currency symbol to SharedPreferences AND update the in-memory

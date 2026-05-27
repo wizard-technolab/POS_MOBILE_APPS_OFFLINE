@@ -3,10 +3,10 @@ import 'dart:io';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:OdoCart/data/repositories/order_repository.dart';
-import 'package:OdoCart/screens/orders_screen.dart';
-import 'package:OdoCart/services/app_config.dart';
-import 'package:OdoCart/services/odoo_service.dart';
+import 'package:odocart/data/repositories/order_repository.dart';
+import 'package:odocart/screens/orders_screen.dart';
+import 'package:odocart/services/app_config.dart';
+import 'package:odocart/services/odoo_service.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:printing/printing.dart';
@@ -201,11 +201,13 @@ class PrintController extends ChangeNotifier {
     try {
       final file = await _generatePdfFile(isBasic: false);
 
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: 'Receipt for order ${order.name}\n'
-            'Total: ${AppConfig.currencySymbol}${order.amountTotal.toStringAsFixed(2)}',
-        sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text: 'Receipt for order ${order.name}\n'
+              'Total: ${AppConfig.currencySymbol}${order.amountTotal.toStringAsFixed(2)}',
+          sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+        ),
       );
 
       whatsappStatus = ActionStatus.success;
@@ -590,11 +592,13 @@ class PrintController extends ChangeNotifier {
     try {
       final file = await _generatePdfFile(isBasic: false);
 
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        subject: 'Receipt - ${order.name}',
-        text: 'Receipt for order ${order.name}\n'
-            'Total: ${AppConfig.currencySymbol}${order.amountTotal.toStringAsFixed(2)}',
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text: 'Receipt for order ${order.name}\n'
+              'Total: ${AppConfig.currencySymbol}${order.amountTotal.toStringAsFixed(2)}',
+          sharePositionOrigin: const Rect.fromLTWH(0, 0, 1, 1),
+        ),
       );
     } catch (e) {
       debugPrint('❌ Share error: $e');

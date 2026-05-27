@@ -105,6 +105,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         await AppConfig.saveSubscriptionEmail(
           await AppConfig.getApiEmail(),
         );
+        final licenseToken = result['license_token']?.toString() ?? '';
+        if (licenseToken.isNotEmpty) {
+          await AppConfig.saveSubscriptionLicenseToken(licenseToken);
+        }
 
         setState(() {
           _expDate = result['exp_date'];
