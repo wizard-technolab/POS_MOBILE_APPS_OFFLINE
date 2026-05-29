@@ -808,6 +808,10 @@ class OrderRepository {
           'customer_note': line['customer_note'] ?? '',
           'image': line['image'] ?? '',
           'variant_attributes': line['variant_attributes'] ?? '{}',
+          'is_combo':
+              (line['is_combo'] == true || line['is_combo'] == 1) ? 1 : 0,
+          'combo_parent_id': line['combo_parent_id'],
+          'combo_name': line['combo_name'] ?? '',
           'price_subtotal': double.parse(subtotal.toStringAsFixed(2)),
           'price_subtotal_incl': double.parse(subtotalIncl.toStringAsFixed(2)),
           'created_at': now,
@@ -1066,7 +1070,7 @@ class OrderRepository {
                 sessionId: currentSessionId);
           }
 
-          if (serverLines is List && serverLines.isNotEmpty) {
+          if (serverLines.isNotEmpty) {
             await saveOrderLines(
               localId,
               serverLines.cast<Map<String, dynamic>>(),
@@ -1158,7 +1162,7 @@ class OrderRepository {
                   sessionId: currentSessionId);
             }
 
-            if (serverLines is List && serverLines.isNotEmpty) {
+            if (serverLines.isNotEmpty) {
               await saveOrderLines(
                 localId,
                 serverLines.cast<Map<String, dynamic>>(),

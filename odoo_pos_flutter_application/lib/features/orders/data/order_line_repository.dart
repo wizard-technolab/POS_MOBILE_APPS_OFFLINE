@@ -128,6 +128,10 @@ class OrderLineRepository {
           'customer_note': line['customer_note'] ?? '',
           'image': line['image'] as String? ?? '',
           'variant_attributes': line['variant_attributes'] ?? '',
+          'is_combo':
+              (line['is_combo'] == true || line['is_combo'] == 1) ? 1 : 0,
+          'combo_parent_id': line['combo_parent_id'],
+          'combo_name': line['combo_name'] ?? '',
           'created_at': createdAt,
         },
       );
@@ -186,6 +190,9 @@ class OrderLineRepository {
       'customer_note': line['customer_note'] as String? ?? '',
       'image': line['image'] as String? ?? '',
       'variant_attributes': variantStr,
+      'is_combo': (line['is_combo'] == true || line['is_combo'] == 1) ? 1 : 0,
+      'combo_parent_id': line['combo_parent_id'],
+      'combo_name': line['combo_name'] ?? '',
       'created_at': createdAt,
     });
   }

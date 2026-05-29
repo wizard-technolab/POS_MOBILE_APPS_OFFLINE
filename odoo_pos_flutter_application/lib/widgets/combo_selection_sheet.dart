@@ -16,6 +16,7 @@ const _kPurple = Color(0xFF6C63FF);
 const _kPurpleLight = Color(0xFF8B83FF);
 const _kGreen = Color(0xFF1DB954);
 const _kOrange = Color(0xFFE8A020);
+const _kRed = Color(0xFFE53935);
 const _kTextPrimary = Color(0xFFFFFFFF);
 const _kTextSecondary = Color(0xFF8B90A7);
 const _kInputBg = Color(0xFF1A1D2E);
@@ -304,24 +305,33 @@ class _ComboSelectionSheetState extends State<_ComboSelectionSheet> {
   // ── One choice row inside a group ────────────────────────
   Widget _buildChoiceRow(ComboGroup group, ComboChoice choice) {
     final isSelected = _selection.isSelected(group.groupId, choice.productId);
+    final isAvailable = choice.isAvailable;
 
     return GestureDetector(
-      onTap: () {
-        setState(() {
-          _selection = _selection.withChoice(group, choice);
-        });
-      },
+      onTap: isAvailable
+          ? () {
+              setState(() {
+                _selection = _selection.withChoice(group, choice);
+              });
+            }
+          : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected
-              ? _kGreen.withValues(alpha: 0.12)
-              : _kInputBg.withValues(alpha: 0.6),
+          color: !isAvailable
+              ? _kRed.withValues(alpha: 0.08)
+              : isSelected
+                  ? _kGreen.withValues(alpha: 0.12)
+                  : _kInputBg.withValues(alpha: 0.6),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isSelected ? _kGreen : Colors.transparent,
+            color: !isAvailable
+                ? _kRed.withValues(alpha: 0.45)
+                : isSelected
+                    ? _kGreen
+                    : Colors.transparent,
             width: 1.5,
           ),
         ),
@@ -338,7 +348,11 @@ class _ComboSelectionSheetState extends State<_ComboSelectionSheet> {
                 borderRadius:
                     group.maxQty > 1 ? BorderRadius.circular(6) : null,
                 border: Border.all(
-                  color: isSelected ? _kGreen : _kTextSecondary,
+                  color: !isAvailable
+                      ? _kRed.withValues(alpha: 0.7)
+                      : isSelected
+                          ? _kGreen
+                          : _kTextSecondary,
                   width: 1.5,
                 ),
               ),
@@ -354,20 +368,30 @@ class _ComboSelectionSheetState extends State<_ComboSelectionSheet> {
               child: Text(
                 choice.productName,
                 style: TextStyle(
-                  color: isSelected ? _kTextPrimary : _kTextSecondary,
+                  color: !isAvailable
+                      ? _kTextSecondary.withValues(alpha: 0.55)
+                      : isSelected
+                          ? _kTextPrimary
+                          : _kTextSecondary,
                   fontSize: 14,
                   fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
                 ),
               ),
             ),
 
-            // Extra price label
+            // Extra price / stock label
             Text(
-              choice.extraPrice == 0
-                  ? '+${AppConfig.currencySymbol}0'
-                  : '+${AppConfig.currencySymbol}${choice.extraPrice.toStringAsFixed(0)}',
+              !isAvailable
+                  ? 'Out of stock'
+                  : choice.extraPrice == 0
+                      ? '+${AppConfig.currencySymbol}0'
+                      : '+${AppConfig.currencySymbol}${choice.extraPrice.toStringAsFixed(0)}',
               style: TextStyle(
-                color: isSelected ? _kGreen : _kTextSecondary,
+                color: !isAvailable
+                    ? _kRed
+                    : isSelected
+                        ? _kGreen
+                        : _kTextSecondary,
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),

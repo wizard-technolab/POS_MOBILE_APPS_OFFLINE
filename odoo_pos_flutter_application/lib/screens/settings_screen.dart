@@ -11,7 +11,6 @@ import '../main.dart';
 import '../services/odoo_service.dart';
 import '../services/app_config.dart' hide sessionChangeNotifier;
 import '../services/cart_service.dart';
-import '../services/db_helper.dart';
 import '../data/repositories/order_repository.dart';
 import '../models/user_model.dart';
 import '../models/sync_model.dart';
@@ -53,11 +52,8 @@ class _SettingsScreenState extends State<SettingsScreen>
 
   UserModel? _user;
   SyncModel? _syncData;
-  List<Map<String, dynamic>> _sessionOrders = []; // orders for selected session
 
   final _deviceCodeCtrl = TextEditingController();
-
-  final dbHelper = DatabaseHelper();
 
   String _savedEmail = '';
   String _selectedSessionName = '';
@@ -151,38 +147,12 @@ class _SettingsScreenState extends State<SettingsScreen>
   Future<void> _loadSyncStatus() async {
     final sync = await OdooService.getSyncStatus();
 
-    // Load orders filtered by the currently selected session.
-    // Session filter works correctly because session selection updates
-    // all existing unsynced orders with the new session_id when session changes.
-    final sessionId = await AppConfig.getPosSessionId();
-    final db = DatabaseHelper();
-    final database = await db.database;
-    List<Map<String, dynamic>> orders = [];
-    try {
-      if (sessionId > 0) {
-        orders = await database.query(
-          'orders',
-          where: 'session_id = ?',
-          whereArgs: [sessionId],
-          orderBy: 'created_at DESC',
-          limit: 20,
-        );
-      } else {
-        orders = await database.query(
-          'orders',
-          orderBy: 'created_at DESC',
-          limit: 20,
-        );
-      }
-    } catch (_) {}
-
     // Load current session name
     final sessionName = await AppConfig.getPosSessionName();
 
     if (!mounted) return;
     setState(() {
       _syncData = sync;
-      _sessionOrders = orders;
       _selectedSessionName = sessionName;
     });
   }
@@ -412,11 +382,16 @@ class _SettingsScreenState extends State<SettingsScreen>
             final odooLines = lines
                 .map((line) => {
                       'product_id': line['product_id'] as int,
-                      'qty': (line['quantity'] as num?)?.toInt() ?? 1,
+                      'qty': (line['quantity'] as num?)?.toInt() ??
+                          (line['qty'] as num?)?.toInt() ??
+                          1,
                       'price': (line['price'] as num?)?.toDouble() ?? 0.0,
                       'tax_rate': (line['tax_rate'] as num?)?.toDouble() ?? 0.0,
                       'note': line['note'] as String? ?? '',
                       'customer_note': line['customer_note'] as String? ?? '',
+                      'is_combo': line['is_combo'] == true || line['is_combo'] == 1,
+                      'combo_parent_id': line['combo_parent_id'],
+                      'combo_name': line['combo_name'] as String? ?? '',
                     })
                 .toList();
 
@@ -1504,56 +1479,51 @@ class _SettingsTile extends StatelessWidget {
   final IconData icon;
   final String label;
   final String? value;
-  final VoidCallback? onTap;
 
   const _SettingsTile({
     required this.icon,
     required this.label,
     this.value,
-    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final displayValue =
         value; // Copy to local variable to allow type promotion
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              color: kTextSecondary,
-              size: 20,
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(
-                  color: kTextPrimary,
-                  fontSize: 14,
-                ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: kTextSecondary,
+            size: 20,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: kTextPrimary,
+                fontSize: 14,
               ),
             ),
-            if (displayValue != null)
-              Text(
-                displayValue,
-                style: const TextStyle(
-                  color: kTextSecondary,
-                  fontSize: 13,
-                ),
+          ),
+          if (displayValue != null)
+            Text(
+              displayValue,
+              style: const TextStyle(
+                color: kTextSecondary,
+                fontSize: 13,
               ),
-            const SizedBox(width: 6),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: kTextSecondary,
-              size: 18,
             ),
-          ],
-        ),
+          const SizedBox(width: 6),
+          const Icon(
+            Icons.chevron_right_rounded,
+            color: kTextSecondary,
+            size: 18,
+          ),
+        ],
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:odocart/screens/product_screen.dart';
 import 'package:flutter/material.dart';
 import '../../../data/repositories/customer_repository.dart';
 import '../../../services/cart_service.dart';
+import '../../../models/combo_model.dart';
 import '../../../services/product_cache.dart';
 import '../../../widgets/top_notification.dart';
 
@@ -204,7 +205,204 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
       cart.setCustomerNote(widget.order.customerNote);
 
       // 6. Load Items into Cart
-      for (final line in _lines) {
+      // Restore configured combos as combos first. A combo is stored as one
+      // parent combo line plus selected child product lines. Without this pass,
+      // the old restore flow treated every child line as a normal cart product.
+      final restoredComboLineIndexes = <int>{};
+
+      bool _lineBool(dynamic raw) =>
+          raw == true || raw == 1 || raw == '1' || raw == 'true';
+
+      for (var parentIndex = 0; parentIndex < _lines.length; parentIndex++) {
+        final parentLine = _lines[parentIndex];
+        final parentProductId =
+            (parentLine['product_id'] as num?)?.toInt() ?? 0;
+        if (parentProductId <= 0) continue;
+
+        final parentIsComboLine = _lineBool(parentLine['is_combo']);
+        final rawParentComboParentId = parentLine['combo_parent_id'];
+        final parentComboParentId =
+            rawParentComboParentId is num ? rawParentComboParentId.toInt() : null;
+
+        // Child combo lines also have is_combo=1. Do not treat them as parents.
+        if (parentIsComboLine &&
+            parentComboParentId != null &&
+            parentComboParentId > 0) {
+          continue;
+        }
+
+        ProductModel? parentProduct = ProductCache.instance.get(parentProductId);
+        final parentLineComboName =
+            (parentLine['combo_name'] as String? ?? '').trim();
+
+        // Older/corrupted caches may not return the combo product by id.
+        // Fallback by combo_name against known combo products.
+        if (parentProduct == null || !parentProduct.isCombo) {
+          if (parentLineComboName.isNotEmpty) {
+            final lowerComboName = parentLineComboName.toLowerCase();
+            for (final candidate in ProductCache.instance.combos) {
+              if (candidate.name.toLowerCase().trim() == lowerComboName) {
+                parentProduct = candidate;
+                break;
+              }
+            }
+          }
+        }
+
+        if (parentProduct == null || !parentProduct.isCombo) continue;
+
+        final comboProduct = parentProduct.toComboProduct();
+        final comboName = parentLineComboName.isNotEmpty
+            ? parentLineComboName
+            : parentProduct.name.trim();
+
+        final selected = <int, List<ComboChoice>>{};
+        final childIndexes = <int>[];
+
+        for (var childIndex = 0; childIndex < _lines.length; childIndex++) {
+          if (childIndex == parentIndex ||
+              restoredComboLineIndexes.contains(childIndex)) {
+            continue;
+          }
+
+          final childLine = _lines[childIndex];
+          final childProductId =
+              (childLine['product_id'] as num?)?.toInt() ?? 0;
+          if (childProductId <= 0) continue;
+
+          final isComboLine = _lineBool(childLine['is_combo']);
+          final comboParentId = (childLine['combo_parent_id'] as num?)?.toInt();
+          final childComboName =
+              (childLine['combo_name'] as String? ?? '').trim();
+          final note = (childLine['note'] as String? ?? '').trim();
+
+          final belongsToThisCombo =
+              (isComboLine &&
+                      (comboParentId == parentProductId ||
+                          comboParentId == comboProduct.id)) ||
+                  (childComboName.isNotEmpty && childComboName == comboName) ||
+                  note == '[Combo: $comboName]' ||
+                  note == '[Combo: ${parentProduct.name}]';
+
+          if (!belongsToThisCombo) continue;
+
+          for (final group in comboProduct.groups) {
+            final match =
+                group.choices.where((c) => c.productId == childProductId);
+            if (match.isNotEmpty) {
+              selected
+                  .putIfAbsent(group.groupId, () => <ComboChoice>[])
+                  .add(match.first);
+              childIndexes.add(childIndex);
+              break;
+            }
+          }
+        }
+
+        if (selected.isEmpty) continue;
+
+        final qty =
+            ((parentLine['qty'] ?? parentLine['quantity']) as num?)?.toInt() ??
+                1;
+        final cartKey = cart.addConfiguredCombo(
+          combo: comboProduct,
+          selection: ComboSelection(selectedChoices: selected),
+          qty: qty,
+        );
+
+        final note = parentLine['note'] as String? ?? '';
+        final customerNote = parentLine['customer_note'] as String? ?? '';
+        if (note.isNotEmpty && !note.startsWith('[Combo:')) {
+          cart.updateComboNote(cartKey, note);
+        }
+        if (customerNote.isNotEmpty) {
+          cart.updateComboCustomerNote(cartKey, customerNote);
+        }
+
+        restoredComboLineIndexes.add(parentIndex);
+        restoredComboLineIndexes.addAll(childIndexes);
+      }
+
+      // Fallback for older orders/API responses where combo_parent_id/is_combo
+      // was not persisted, but combo child lines still carry the Odoo note
+      // format: [Combo: Combo Name]. Rebuild the same ComboSelection used by
+      // the product-page combo sheet and mark those flat lines as restored.
+      final fallbackComboNames = <String>{};
+      String _comboNameFromNote(dynamic raw) {
+        final note = (raw as String? ?? '').trim();
+        if (note.startsWith('[Combo:') && note.endsWith(']')) {
+          return note.substring('[Combo:'.length, note.length - 1).trim();
+        }
+        return '';
+      }
+
+      for (var i = 0; i < _lines.length; i++) {
+        if (restoredComboLineIndexes.contains(i)) continue;
+        final line = _lines[i];
+        final comboName = ((line['combo_name'] as String? ?? '').trim().isNotEmpty)
+            ? (line['combo_name'] as String).trim()
+            : _comboNameFromNote(line['note']);
+        if (comboName.isNotEmpty) fallbackComboNames.add(comboName);
+      }
+
+      for (final comboName in fallbackComboNames) {
+        ProductModel? comboTemplate;
+        final lowerName = comboName.toLowerCase().trim();
+        for (final candidate in ProductCache.instance.combos) {
+          if (candidate.name.toLowerCase().trim() == lowerName) {
+            comboTemplate = candidate;
+            break;
+          }
+        }
+        if (comboTemplate == null || !comboTemplate.isCombo) continue;
+
+        final comboProduct = comboTemplate.toComboProduct();
+        final selected = <int, List<ComboChoice>>{};
+        final matchedIndexes = <int>[];
+        int qty = 1;
+
+        for (var i = 0; i < _lines.length; i++) {
+          if (restoredComboLineIndexes.contains(i)) continue;
+          final line = _lines[i];
+          final productId = (line['product_id'] as num?)?.toInt() ?? 0;
+          final lineComboName = ((line['combo_name'] as String? ?? '').trim().isNotEmpty)
+              ? (line['combo_name'] as String).trim()
+              : _comboNameFromNote(line['note']);
+
+          final template = productId > 0 ? ProductCache.instance.get(productId) : null;
+          if (template != null && template.isCombo &&
+              template.name.toLowerCase().trim() == lowerName) {
+            qty = ((line['qty'] ?? line['quantity']) as num?)?.toInt() ?? qty;
+            matchedIndexes.add(i);
+            continue;
+          }
+
+          if (lineComboName != comboName) continue;
+
+          for (final group in comboProduct.groups) {
+            final match = group.choices.where((c) => c.productId == productId);
+            if (match.isNotEmpty) {
+              selected.putIfAbsent(group.groupId, () => <ComboChoice>[]).add(match.first);
+              qty = ((line['qty'] ?? line['quantity']) as num?)?.toInt() ?? qty;
+              matchedIndexes.add(i);
+              break;
+            }
+          }
+        }
+
+        if (selected.isEmpty) continue;
+        cart.addConfiguredCombo(
+          combo: comboProduct,
+          selection: ComboSelection(selectedChoices: selected),
+          qty: qty,
+        );
+        restoredComboLineIndexes.addAll(matchedIndexes);
+        debugPrint('✅ Restored combo via fallback note grouping: $comboName');
+      }
+
+      for (var lineIndex = 0; lineIndex < _lines.length; lineIndex++) {
+        if (restoredComboLineIndexes.contains(lineIndex)) continue;
+        final line = _lines[lineIndex];
         final productId = (line['product_id'] as num?)?.toInt() ?? 0;
         final qty = ((line['qty'] ?? line['quantity']) as num?)?.toInt() ?? 1;
 
@@ -223,8 +421,10 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
           }
         }
 
-        // Skip this line if product still not found in cache
-        if (template == null) continue;
+        // Skip this line if product still not found in cache. Also skip
+        // combo parent products here: combos must be restored through
+        // addConfiguredCombo(), never as standalone regular products.
+        if (template == null || template.isCombo) continue;
 
         // Restoration logic must handle both simple products and specific variants
         if (template.hasVariants && template.variants.isNotEmpty) {

@@ -84,10 +84,12 @@ class DatabaseHelper {
       'image TEXT DEFAULT ""',
       'tax_rate REAL DEFAULT 18.0',
       'session_id INTEGER DEFAULT 0',
+      'is_combo INTEGER DEFAULT 0',
+      'combo_parent_id INTEGER',
+      'combo_name TEXT DEFAULT ""',
     ];
 
     for (final col in columns) {
-      final name = col.split(' ')[0];
       try {
         await db.execute('ALTER TABLE order_lines ADD COLUMN $col');
       } catch (_) {

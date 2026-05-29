@@ -520,6 +520,12 @@ class OdooService {
         'tax_rate': (line['tax_rate'] as num?)?.toDouble() ?? 0.0,
         'note': line['note'] as String? ?? '',
         'customer_note': line['customer_note'] as String? ?? '',
+        // Preserve combo metadata when a local draft is synced/updated.
+        // Without these fields, the server can only return flat product lines
+        // and Add Back to Cart cannot rebuild the configured combo.
+        'is_combo': line['is_combo'] == true || line['is_combo'] == 1,
+        'combo_parent_id': line['combo_parent_id'],
+        'combo_name': line['combo_name'] as String? ?? '',
       };
     }).toList();
 

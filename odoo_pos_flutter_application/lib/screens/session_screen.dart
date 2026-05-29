@@ -221,11 +221,16 @@ class _PosSessionScreenState extends State<PosSessionScreen> {
         final odooLines = lines
             .map((line) => {
                   'product_id': line['product_id'] as int,
-                  'qty': (line['quantity'] as num?)?.toInt() ?? 1,
+                  'qty': (line['quantity'] as num?)?.toInt() ??
+                      (line['qty'] as num?)?.toInt() ??
+                      1,
                   'price': (line['price'] as num?)?.toDouble() ?? 0.0,
                   'tax_rate': (line['tax_rate'] as num?)?.toDouble() ?? 0.0,
                   'note': line['note'] as String? ?? '',
                   'customer_note': line['customer_note'] as String? ?? '',
+                  'is_combo': line['is_combo'] == true || line['is_combo'] == 1,
+                  'combo_parent_id': line['combo_parent_id'],
+                  'combo_name': line['combo_name'] as String? ?? '',
                 })
             .toList();
 
@@ -639,7 +644,6 @@ class _PosSessionScreenState extends State<PosSessionScreen> {
           ..._posSessions.asMap().entries.map((entry) {
             final index = entry.key;
             final session = entry.value;
-            final id = session['id'] as int;
             final posName = session['pos_config_name'] as String? ?? '';
             final sessionName = session['name'] as String? ?? '';
             final displayName =

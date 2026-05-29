@@ -1893,7 +1893,22 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   // ── Cancel Order Confirmation ──────────────────────────
-  void _confirmCancelOrder(BuildContext context) {
+  Future<void> _confirmCancelOrder(BuildContext context) async {
+    final deviceCode = await AppConfig.getDeviceCode();
+    if (deviceCode.isEmpty) {
+      if (context.mounted) {
+        showTopNotification(
+          context,
+          'Device ID is required to cancel orders. Please configure it in Settings.',
+          color: _kOrange,
+          icon: Icons.settings_suggest_rounded,
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2225,7 +2240,23 @@ class _CartScreenState extends State<CartScreen> {
   }
 
   // ── Proceed to Payment ────────────────────────────
-  void _proceedToPayment(BuildContext context) {
+  Future<void> _proceedToPayment(BuildContext context) async {
+    final deviceCode = await AppConfig.getDeviceCode();
+
+    if (deviceCode.isEmpty) {
+      if (context.mounted) {
+        showTopNotification(
+          context,
+          'Device ID is required to process payments. Please configure it in Settings.',
+          color: _kOrange,
+          icon: Icons.settings_suggest_rounded,
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

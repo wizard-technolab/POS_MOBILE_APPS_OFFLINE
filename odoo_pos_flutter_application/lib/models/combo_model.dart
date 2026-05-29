@@ -16,14 +16,19 @@ class ComboChoice {
   // Extra charge on top of combo base price
   final double extraPrice;
 
-  // NEW: Stock quantity for this combo choice
+  // Stock quantity of the product.product assigned in this combo choice
   final double qtyAvailable;
+
+  // Inventory tracking flag of the product.product assigned in this combo choice.
+  // Non-storable/service products must remain selectable even when qtyAvailable is 0.
+  final bool isStorable;
 
   const ComboChoice({
     required this.productId,
     required this.productName,
     required this.extraPrice,
     this.qtyAvailable = 0.0,
+    this.isStorable = true,
   });
 
   factory ComboChoice.fromJson(Map<String, dynamic> json) => ComboChoice(
@@ -31,6 +36,16 @@ class ComboChoice {
         productName: json['product_name'] ?? '',
         extraPrice: (json['extra_price'] ?? 0).toDouble(),
         qtyAvailable: (json['qty_available'] ?? 0).toDouble(),
+        isStorable: () {
+          final raw = json['is_storable'] ?? json['track_inventory'];
+          if (raw is bool) return raw;
+          if (raw is num) return raw != 0;
+          if (raw is String) {
+            final value = raw.toLowerCase().trim();
+            return value == 'true' || value == '1' || value == 'yes';
+          }
+          return true;
+        }(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -38,10 +53,13 @@ class ComboChoice {
         'product_name': productName,
         'extra_price': extraPrice,
         'qty_available': qtyAvailable,
+        'is_storable': isStorable,
       };
 
-  // Whether this choice is available for selection
-  bool get isAvailable => qtyAvailable > 0;
+  // Whether this choice is available for selection.
+  // Only storable child products need positive stock.
+  // Service/non-storable child products are always available.
+  bool get isAvailable => !isStorable || qtyAvailable > 0;
 }
 
 // One group/slot in a combo (e.g. "Main Dish", "Drink", "Add-on")
@@ -289,7 +307,6 @@ class ComboCartItem {
         'qty': qty,
         'note': note,
         'customer_note': customerNote,
-        'tax_rate': taxRate, // persist combo tax rate
       };
 
   factory ComboCartItem.fromJson(Map<String, dynamic> json) => ComboCartItem(
@@ -317,7 +334,6 @@ class ComboCartItem {
       'product_name': comboName,
       'qty': qty,
       'price': unitPrice,
-      'tax_rate': taxRate,
       'is_combo': true,
       'combo_parent_id': null,
       'combo_name': comboName,
@@ -345,7 +361,6 @@ class ComboCartItem {
           'product_name': choice.productName,
           'qty': qty,
           'price': choice.extraPrice,
-          'tax_rate': taxRate,
           'is_combo': true,
           'combo_parent_id': comboProductId,
           'combo_name': comboName,

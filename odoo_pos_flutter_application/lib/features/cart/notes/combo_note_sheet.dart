@@ -36,7 +36,9 @@ class ComboNoteSheetState extends State<ComboNoteSheet> {
     super.initState();
     // If initialNote is given (customer note), use it; otherwise fall back to kitchen note
     _ctrl = TextEditingController(
-      text: widget.initialNote ?? widget.combo.note,
+      text: widget.initialNote.isNotEmpty
+          ? widget.initialNote
+          : widget.combo.note,
     );
   }
 

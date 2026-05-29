@@ -769,11 +769,10 @@ class CartService {
       final currentSessionId = await AppConfig.getPosSessionId();
 
       for (final item in comboMap.values) {
-        final selectionJson = jsonEncode(
-          item.selection.selectedChoices.map((groupId, choices) {
-            return MapEntry(groupId, choices.map((c) => c.toJson()).toList());
-          }),
-        );
+        // Use ComboSelection.toJson() so JSON keys are strings.
+        // jsonEncode cannot encode Dart maps with int keys, which causes:
+        // "Converting object to an encodable object failed: _Map len:2".
+        final selectionJson = jsonEncode(item.selection.toJson());
 
         await db.insert(
             'combo_cart_items',
@@ -787,7 +786,6 @@ class CartService {
               'note': item.note,
               'customer_note': item.customerNote,
               'session_id': currentSessionId,
-              'tax_rate': item.taxRate,
               'created_at': DateTime.now().millisecondsSinceEpoch,
             },
             conflictAlgorithm: ConflictAlgorithm.replace);
@@ -864,11 +862,10 @@ class CartService {
       // Insert current combo cart items into pending table
       final currentCombos = comboCartNotifier.value;
       for (final item in currentCombos.values) {
-        final selectionJson = jsonEncode(
-          item.selection.selectedChoices.map((groupId, choices) {
-            return MapEntry(groupId, choices.map((c) => c.toJson()).toList());
-          }),
-        );
+        // Use ComboSelection.toJson() so JSON keys are strings.
+        // jsonEncode cannot encode Dart maps with int keys, which causes:
+        // "Converting object to an encodable object failed: _Map len:2".
+        final selectionJson = jsonEncode(item.selection.toJson());
         await db.insert('pending_combo_cart_items', {
           'cart_key': item.cartKey,
           'combo_product_id': item.comboProductId,
@@ -879,7 +876,6 @@ class CartService {
           'note': item.note,
           'customer_note': item.customerNote,
           'session_id': sessionId,
-          'tax_rate': item.taxRate,
           'created_at': DateTime.now().millisecondsSinceEpoch,
         });
       }
