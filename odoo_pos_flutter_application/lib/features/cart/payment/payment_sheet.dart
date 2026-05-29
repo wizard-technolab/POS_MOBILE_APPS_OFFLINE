@@ -440,6 +440,7 @@ class PaymentSheetState extends State<PaymentSheet> {
               {
                 'status': 'pending',
                 'payment_method': _method,
+                'device_code': deviceCode,
                 'customer_id': customerId,
                 'customer_name': customerName,
                 'customer_note': cart.customerNoteNotifier.value,
@@ -773,6 +774,7 @@ class PaymentSheetState extends State<PaymentSheet> {
               {
                 'status': 'pending',
                 'payment_method': _method,
+                'device_code': deviceCode,
                 'customer_id': customerId,
                 'customer_name': customerName,
                 'customer_note': cart.customerNoteNotifier.value,

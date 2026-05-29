@@ -1,5 +1,6 @@
 ﻿import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:odocart/services/db_helper.dart';
 import 'package:odocart/widgets/top_notification.dart';
 import 'package:odocart/data/repositories/order_repository.dart';
 import 'package:http/http.dart' as http;
@@ -192,6 +193,12 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
       final deviceCode = await AppConfig.getDeviceCode();
       final sessionId = await AppConfig.getPosSessionId();
       final cart = CartService.instance;
+
+      final totalRemainingUnits =
+          _remainingItems.fold(0, (sum, item) => sum + item.remainingQty);
+      final bool isLastPerson = _selectedCount == totalRemainingUnits;
+      final bool isRestoredOrder = cart.editingPendingLocalId != null;
+      final bool useRegularPaymentForLastPart = isLastPerson && isRestoredOrder;
       final taxRate = cart.taxRate;
 
       // Guard: device code must be configured
@@ -232,8 +239,11 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
         }
       }
 
-      // Each sub-order gets its own unique external_id for idempotency.
-      final externalId = const Uuid().v4();
+      // Use original external_id for the last part of a restored order so Odoo updates it.
+      // Otherwise, generate a unique ID for this person's share.
+      final externalId = useRegularPaymentForLastPart
+          ? (cart.editingPendingExternalId ?? const Uuid().v4())
+          : const Uuid().v4();
 
       // Build the full API payload for this person's sub-order.
       final payload = <String, dynamic>{
@@ -273,25 +283,74 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
           deviceCode: deviceCode,
           sessionId: sessionId,
           lines: lines,
-          cart: cart, companyName: '',
-          // Explicitly include product_name and image for regular items
-          // (combo.toOrderLines already handles this for combos)
+          cart: cart,
+          companyName: '',
+          useRegularPaymentForLastPart: useRegularPaymentForLastPart,
         );
         return;
       }
 
-      // ── Online path — POST /api/order/split ─────────────────────────────
+      // ── Online path ────────────────────────────────────────────────────────
       try {
-        final response = await http
-            .post(
-              Uri.parse('$baseUrl/api/order/split'),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-              },
-              body: jsonEncode(payload),
-            )
-            .timeout(const Duration(seconds: 20));
+        final odooOrderId = cart.editingPendingOdooOrderId;
+        final bool isServerSyncedDraft = odooOrderId != null && odooOrderId > 0;
+        http.Response response;
+
+        if (useRegularPaymentForLastPart) {
+          // PATH: Final part of a restored order — update and pay the original Odoo order
+          if (isServerSyncedDraft) {
+            // Pay existing Odoo draft in-place
+            final payPayload = {
+              'device_code': deviceCode,
+              'session_id': sessionId,
+              'lines': lines,
+              'payments': [
+                {'method': _paymentMethod, 'amount': _personTotal}
+              ],
+              'split_group_id': _splitGroupId,
+              'split_person_index': _currentPersonIndex,
+            };
+            response = await http
+                .post(
+                  Uri.parse('$baseUrl/api/order/$odooOrderId/pay'),
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer $token',
+                  },
+                  body: jsonEncode(payPayload),
+                )
+                .timeout(const Duration(seconds: 20));
+          } else {
+            // Create/Update order using external_id matching (upsert)
+            final regularPayload = {
+              ...payload,
+              if (odooOrderId != null && odooOrderId > 0)
+                'odoo_order_id': odooOrderId,
+            };
+            response = await http
+                .post(
+                  Uri.parse('$baseUrl/api/order'),
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer $token',
+                  },
+                  body: jsonEncode(regularPayload),
+                )
+                .timeout(const Duration(seconds: 20));
+          }
+        } else {
+          // PATH: Normal split order (sub-order creation)
+          response = await http
+              .post(
+                Uri.parse('$baseUrl/api/order/split'),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $token',
+                },
+                body: jsonEncode(payload),
+              )
+              .timeout(const Duration(seconds: 20));
+        }
 
         final data = jsonDecode(response.body);
 
@@ -299,9 +358,6 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
           // Store paid amount for the success screen
           _lastPersonAmount = _personTotal;
 
-          // Save this split sub-order locally with the CORRECT payment method
-          // right away — same pattern as _placeOrder().
-          //
           // Without this, when orderPlacedNotifier fires and the Orders screen
           // refreshes via GET /api/orders, Odoo's pos.payment record may not
           // be committed yet → payment_methods returns [] → local fromJson
@@ -311,23 +367,31 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
             final orderName = data['data']?['order_name'] as String?;
             if (odooOrderId > 0) {
               final orderRepo = OrderRepository();
-              await orderRepo.insertSyncedOrder(
-                name: orderName, // Pass Odoo name
-                odooId: odooOrderId,
-                externalId: externalId,
-                // Use the per-person customer name, or 'Walk-in' for anonymous
-                customerName:
-                    _selectedCustomer?['name'] as String? ?? 'Walk-in',
-                // Note links this local record back to the split group
-                customerNote:
-                    'Split order — person $_currentPersonIndex (group: $_splitGroupId)',
-                total: _personTotal,
-                // Pass the actual method the cashier selected
-                // (_paymentMethod is 'Cash' or 'Bank', never the default)
-                paymentMethod: _paymentMethod,
-                sessionId: sessionId,
-                lines: lines,
-              );
+
+              if (useRegularPaymentForLastPart &&
+                  cart.editingPendingLocalId != null) {
+                // Final part of restored order — update the local row to 'done'
+                await orderRepo.markOrderAsSynced(
+                  cart.editingPendingLocalId!,
+                  paymentMethod: _paymentMethod,
+                  odooOrderId: odooOrderId,
+                );
+              } else {
+                // Normal split part — insert fresh synced record
+                await orderRepo.insertSyncedOrder(
+                  name: orderName,
+                  odooId: odooOrderId,
+                  externalId: externalId,
+                  customerName:
+                      _selectedCustomer?['name'] as String? ?? 'Walk-in',
+                  customerNote:
+                      'Split order — person $_currentPersonIndex (group: $_splitGroupId)',
+                  total: _personTotal,
+                  paymentMethod: _paymentMethod,
+                  sessionId: sessionId,
+                  lines: lines,
+                );
+              }
             }
           } catch (saveErr) {
             // Non-fatal — the order is already confirmed on Odoo.
@@ -345,11 +409,6 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
           if (!allPaid) _deductPaidItemsFromCart();
 
           if (allPaid) {
-            // If this split was done on a restored pending order ("Add back to cart"),
-            // cancel the original order on both local DB and Odoo so it does not
-            // stay as a duplicate alongside the new split sub-orders.
-            await _cancelOriginalPendingOrder();
-
             cart.clearCart();
             orderPlacedNotifier.value++;
             if (mounted) {
@@ -388,6 +447,7 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
           companyName:
               await AppConfig.getCompanyName(), // Fetch and pass company name
           cart: cart,
+          useRegularPaymentForLastPart: useRegularPaymentForLastPart,
         );
       }
     } catch (e) {
@@ -409,6 +469,7 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
     required List<Map<String, dynamic>> lines,
     required String? companyName,
     required CartService cart,
+    required bool useRegularPaymentForLastPart,
   }) async {
     debugPrint(
         '📱 Saving split order offline (person $_currentPersonIndex)...');
@@ -416,28 +477,60 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
       final orderRepo = OrderRepository();
       final customerId = _selectedCustomer?['id'] as int? ?? 0;
       final customerName = _selectedCustomer?['name'] as String? ?? 'Walk-in';
+      final splitNote =
+          'Split order — person $_currentPersonIndex (group: $_splitGroupId)';
 
-      final orderId = await orderRepo.createOfflineOrder(
-        externalId: externalId,
-        deviceCode: deviceCode,
-        customerId: customerId,
-        customerName: customerName,
-        // Note stored so sync knows this was part of a split
-        customerNote:
-            'Split order — person $_currentPersonIndex (group: $_splitGroupId)',
-        sessionId: sessionId,
-        lines: lines,
-        total: _personTotal,
-        taxAmount: cart.taxAmount,
-        // FIX: was missing — must be 'pending' so sync_manager picks it up
-        companyName: companyName ?? '',
-        // when the device comes back online (default was 'draft' = no sync).
-        status: 'pending',
-        // FIX: was missing — pass the actual method the cashier selected.
-        // Without this the default 'Cash' was always stored, so the order
-        // card showed Cash even when the cashier tapped Bank.
-        paymentMethod: _paymentMethod,
-      );
+      int orderId;
+      if (useRegularPaymentForLastPart && cart.editingPendingLocalId != null) {
+        // Final part of a restored order — update the original SQLite row instead of creating new
+        final db = await DatabaseHelper().database;
+        final now = DateTime.now().millisecondsSinceEpoch;
+
+        await db.update(
+          'orders',
+          {
+            'status': 'pending', // paid, waiting sync
+            'payment_method': _paymentMethod,
+            'device_code': deviceCode,
+            'customer_id': customerId,
+            'customer_name': customerName,
+            'customer_note': splitNote,
+            'total': _personTotal,
+            'tax_amount': cart.taxAmount,
+            'synced': 0,
+            'company_name': companyName ?? '',
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [cart.editingPendingLocalId],
+        );
+
+        // Replace old lines with the items that were actually selected for this last split payment
+        await db.delete('order_lines',
+            where: 'order_id = ?', whereArgs: [cart.editingPendingLocalId!]);
+        await orderRepo.saveOrderLines(cart.editingPendingLocalId!, lines,
+            sessionId: sessionId);
+
+        orderId = cart.editingPendingLocalId!;
+        debugPrint(
+            '✅ Updated existing restored order (local id=$orderId) with final split payment');
+      } else {
+        // Normal split part — create new offline order
+        orderId = await orderRepo.createOfflineOrder(
+          externalId: externalId,
+          deviceCode: deviceCode,
+          customerId: customerId,
+          customerName: customerName,
+          customerNote: splitNote,
+          sessionId: sessionId,
+          lines: lines,
+          total: _personTotal,
+          taxAmount: cart.taxAmount,
+          status: 'pending',
+          companyName: companyName ?? '',
+          paymentMethod: _paymentMethod,
+        );
+      }
 
       if (orderId > 0) {
         debugPrint('✅ Split order saved offline with ID: $orderId');
@@ -457,9 +550,6 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
         if (!allPaid) _deductPaidItemsFromCart();
 
         if (allPaid) {
-          // Cancel the original pending order so it does not stay as a duplicate
-          await _cancelOriginalPendingOrder();
-
           cart.clearCart();
           orderPlacedNotifier.value++;
         }
@@ -1371,121 +1461,6 @@ class SplitFlowSheetState extends State<SplitFlowSheet> {
           style: TextStyle(
               color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
         );
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // _cancelOriginalPendingOrder
-  //
-  // When split is done on a restored pending order ("Add back to cart"),
-  // the original order must be cancelled so it does not stay as a duplicate
-  // alongside the new split sub-orders created during this session.
-  //
-  // Uses the same two-strategy approach as _cancelOrder() in cart_screen.dart:
-  //   Strategy A: cancel by Odoo order ID (for "New" backend orders with no external_id)
-  //   Strategy B: cancel by external_id (for Flutter-created draft orders)
-  // ─────────────────────────────────────────────────────────────────────────
-  Future<void> _cancelOriginalPendingOrder() async {
-    final cart = CartService.instance;
-    final editingLocalId = cart.editingPendingLocalId;
-    final editingOdooId = cart.editingPendingOdooOrderId;
-    final editingExternalId = cart.editingPendingExternalId;
-
-    // If no editing state, this was a fresh cart — nothing to cancel
-    if (editingLocalId == null) return;
-
-    try {
-      final orderRepo = OrderRepository();
-
-      // 1. Mark original order as cancelled in local SQLite
-      await orderRepo.updateOrderStatus(editingLocalId, 'cancel', synced: 0);
-      debugPrint(
-          '✅ Split complete: marked original order $editingLocalId as cancelled (local)');
-
-      // 2. Cancel on Odoo server
-      final baseUrl = await AppConfig.getServerUrl();
-      final token = await AppConfig.getApiToken();
-      final deviceCode = await AppConfig.getDeviceCode();
-      final sessionId = await AppConfig.getPosSessionId();
-
-      bool isOnline = false;
-      if (baseUrl.isNotEmpty) {
-        try {
-          final healthCheck = await http
-              .get(Uri.parse('$baseUrl/web/health'))
-              .timeout(const Duration(seconds: 5));
-          isOnline = healthCheck.statusCode == 200;
-        } catch (_) {
-          isOnline = false;
-        }
-      }
-
-      if (isOnline) {
-        bool cancelledOnOdoo = false;
-
-        // Strategy A: cancel by Odoo order ID (Odoo-backend "New" orders have no external_id)
-        if (editingOdooId != null && editingOdooId > 0) {
-          try {
-            final response = await http
-                .post(
-                  Uri.parse('$baseUrl/api/order/$editingOdooId/cancel'),
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer $token',
-                  },
-                  body: jsonEncode({'device_code': deviceCode}),
-                )
-                .timeout(const Duration(seconds: 10));
-            final data = jsonDecode(response.body);
-            cancelledOnOdoo = data['status'] == 'success';
-            debugPrint(
-                '✅ Split: cancelled original Odoo order $editingOdooId by ID');
-          } catch (e) {
-            debugPrint('⚠️ Split: could not cancel Odoo order by ID: $e');
-          }
-        }
-
-        // Strategy B: cancel by external_id (Flutter-created draft orders)
-        if (!cancelledOnOdoo &&
-            editingExternalId != null &&
-            editingExternalId.isNotEmpty) {
-          try {
-            await http
-                .post(
-                  Uri.parse('$baseUrl/api/order/cancel'),
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': 'Bearer $token',
-                  },
-                  body: jsonEncode({
-                    'external_id': editingExternalId,
-                    'device_code': deviceCode,
-                    'session_id': sessionId,
-                    'total': 0,
-                    'lines': [],
-                  }),
-                )
-                .timeout(const Duration(seconds: 10));
-            cancelledOnOdoo = true;
-            debugPrint(
-                '✅ Split: cancelled original order by external_id: $editingExternalId');
-          } catch (e) {
-            debugPrint(
-                '⚠️ Split: could not cancel Odoo order by external_id: $e');
-          }
-        }
-
-        // Mark local row as synced if Odoo cancel succeeded
-        if (cancelledOnOdoo) {
-          await orderRepo.updateOrderStatus(editingLocalId, 'cancel',
-              synced: 1);
-        }
-        // If offline cancel failed, synced=0 stays → sync_manager will retry later
-      }
-    } catch (e) {
-      // Non-fatal — split sub-orders are already created correctly.
-      // Original order will stay as duplicate until sync retries.
-      debugPrint('⚠️ Split: could not cancel original pending order: $e');
     }
   }
 

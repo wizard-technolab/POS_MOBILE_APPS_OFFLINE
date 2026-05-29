@@ -34,21 +34,25 @@ class OrderRepository {
         'Cash', // Actual payment method for Odoo sync payload
     String companyName =
         '', // Company name shown on receipt header for offline orders
+    String? fixedName,
   }) async {
     try {
       final db = await dbHelper.database;
       final now = DateTime.now().millisecondsSinceEpoch;
 
-      final generatedName = status == 'cancel'
-          ? '/'
+      // Always allocate a real sequence name, including cancelled orders.
+      // Odoo POS consumes a sequence even when an order is cancelled; doing the
+      // same offline prevents the next offline order from reusing/skipping names
+      // differently from online mode.
+      final generatedName = (fixedName != null && fixedName.isNotEmpty)
+          ? fixedName
           : await _generateNextOrderName(sessionId, deviceCode);
 
       // Insert order — status and paymentMethod are saved so sync works correctly
       final orderId = await db.insert(
         'orders',
         {
-          'name':
-              generatedName, // Use '/' for cancelled, else generated sequence
+          'name': generatedName,
           'external_id': externalId,
           'device_code': deviceCode,
           'customer_id': customerId,
@@ -90,6 +94,12 @@ class OrderRepository {
       debugPrint('❌ createOfflineOrder error: $e');
       return 0;
     }
+  }
+
+  /// Public wrapper used by cart cancellation when an online cancel needs
+  /// to send the visible sequence name to Odoo before the local row exists.
+  Future<String> generateNextOrderName(int sessionId, String deviceCode) {
+    return _generateNextOrderName(sessionId, deviceCode);
   }
 
   /// Generates the next name in sequence: "Session Name - Device Code - 0001"
@@ -450,7 +460,8 @@ class OrderRepository {
   // Parameters:
   //   localOrderId  — the SQLite orders.id of the local draft row
   //   odooOrderId   — the Odoo pos.order id returned by /api/order/draft
-  Future<void> saveDraftOdooOrderId(int localOrderId, int odooOrderId) async {
+  Future<void> saveDraftOdooOrderId(int localOrderId, int odooOrderId,
+      {int? sessionId}) async {
     try {
       final db = await dbHelper.database;
       await db.update(
@@ -460,11 +471,15 @@ class OrderRepository {
           'synced': 1,
           'updated_at': DateTime.now().millisecondsSinceEpoch,
         },
-        where: 'id = ?',
-        whereArgs: [localOrderId],
+        where: sessionId != null && sessionId > 0
+            ? 'id = ? AND session_id = ?'
+            : 'id = ?',
+        whereArgs: sessionId != null && sessionId > 0
+            ? [localOrderId, sessionId]
+            : [localOrderId],
       );
       debugPrint(
-        '✅ Saved odoo_order_id=$odooOrderId for local draft id=$localOrderId',
+        "✅ Saved odoo_order_id=$odooOrderId for local draft id=$localOrderId session=${sessionId ?? 'current'}",
       );
     } catch (e) {
       debugPrint('❌ saveDraftOdooOrderId error: $e');
@@ -477,6 +492,7 @@ class OrderRepository {
     String status, {
     String? paymentMethod,
     int? synced,
+    int? sessionId,
   }) async {
     try {
       final db = await dbHelper.database;
@@ -491,8 +507,12 @@ class OrderRepository {
           'status': status,
           'updated_at': DateTime.now().millisecondsSinceEpoch,
         },
-        where: 'id = ?',
-        whereArgs: [orderId],
+        where: sessionId != null && sessionId > 0
+            ? 'id = ? AND session_id = ?'
+            : 'id = ?',
+        whereArgs: sessionId != null && sessionId > 0
+            ? [orderId, sessionId]
+            : [orderId],
       );
     } catch (e) {
       return 0;
@@ -667,6 +687,8 @@ class OrderRepository {
     int orderId, {
     String paymentMethod = 'Cash',
     int? odooOrderId,
+    int? sessionId,
+    String status = 'done',
   }) async {
     try {
       final db = await dbHelper.database;
@@ -674,15 +696,19 @@ class OrderRepository {
         'orders',
         {
           'synced': 1,
-          'status': 'done',
+          'status': status,
           'payment_method':
               paymentMethod, // Save actual method used at payment time
           if (odooOrderId != null && odooOrderId > 0)
             'odoo_order_id': odooOrderId,
           'updated_at': DateTime.now().millisecondsSinceEpoch,
         },
-        where: 'id = ?',
-        whereArgs: [orderId],
+        where: sessionId != null && sessionId > 0
+            ? 'id = ? AND session_id = ?'
+            : 'id = ?',
+        whereArgs: sessionId != null && sessionId > 0
+            ? [orderId, sessionId]
+            : [orderId],
       );
     } catch (e) {
       return 0;
@@ -750,6 +776,7 @@ class OrderRepository {
     String? customerNote,
     String? status,
     int synced = 0, // Default to 0 (unsynced) for draft updates
+    int? sessionId,
   }) async {
     try {
       final db = await dbHelper.database;
@@ -768,15 +795,23 @@ class OrderRepository {
           'synced': synced,
           'updated_at': now,
         },
-        where: 'id = ?',
-        whereArgs: [orderId],
+        where: sessionId != null && sessionId > 0
+            ? 'id = ? AND session_id = ?'
+            : 'id = ?',
+        whereArgs: sessionId != null && sessionId > 0
+            ? [orderId, sessionId]
+            : [orderId],
       );
 
       final orderRows = await db.query(
         'orders',
         columns: ['session_id'],
-        where: 'id = ?',
-        whereArgs: [orderId],
+        where: sessionId != null && sessionId > 0
+            ? 'id = ? AND session_id = ?'
+            : 'id = ?',
+        whereArgs: sessionId != null && sessionId > 0
+            ? [orderId, sessionId]
+            : [orderId],
         limit: 1,
       );
       final lineSessionId = orderRows.isNotEmpty
@@ -826,19 +861,24 @@ class OrderRepository {
     }
   }
 
-  Future<int> cancelOfflineOrder(String externalId) async {
+  Future<int> cancelOfflineOrder(String externalId, {int? sessionId}) async {
     try {
       final db = await dbHelper.database;
       return await db.update(
         'orders',
         {
-          'name':
-              '/', // Assign "/" to cancelled orders so they don't break sequence parsing
+          // Preserve the original order name/sequence when cancelling.
+          // Rewriting to '/' makes offline cancelled orders disappear from the
+          // sequence and causes the next order number to be calculated wrongly.
           'status': 'cancel',
           'updated_at': DateTime.now().millisecondsSinceEpoch,
         },
-        where: 'external_id = ?',
-        whereArgs: [externalId],
+        where: sessionId != null && sessionId > 0
+            ? 'external_id = ? AND session_id = ?'
+            : 'external_id = ?',
+        whereArgs: sessionId != null && sessionId > 0
+            ? [externalId, sessionId]
+            : [externalId],
       );
     } catch (e) {
       return 0;
@@ -1054,6 +1094,9 @@ class OrderRepository {
             'company_name': serverCompanyName,
             'session_id': serverSessionId,
             'odoo_order_id': serverId,
+            'device_code': (order['device_code'] as String?)?.isNotEmpty == true
+                ? order['device_code']
+                : await AppConfig.getDeviceCode(),
             'updated_at': DateTime.now().millisecondsSinceEpoch,
           },
           where: 'id = ?',
@@ -1134,6 +1177,10 @@ class OrderRepository {
               'synced': effectiveSyncedExt,
               'status': effectiveStatusExt,
               'odoo_order_id': serverId,
+              'device_code':
+                  (order['device_code'] as String?)?.isNotEmpty == true
+                      ? order['device_code']
+                      : await AppConfig.getDeviceCode(),
               // Keep local payment_method when server has not confirmed payment yet
               'payment_method': serverPaymentMethod ??
                   (serverStatus == 'done'
@@ -1183,6 +1230,9 @@ class OrderRepository {
           'name': order['name'] as String? ??
               'ORDER-${order['id']}', // Ensure name is always present
           'odoo_order_id': serverId,
+          'device_code': (order['device_code'] as String?)?.isNotEmpty == true
+              ? order['device_code']
+              : await AppConfig.getDeviceCode(),
           'customer_id': serverCustomerId,
           'customer_name': resolvedName,
           'total': (order['amount_total'] ?? 0).toDouble(),

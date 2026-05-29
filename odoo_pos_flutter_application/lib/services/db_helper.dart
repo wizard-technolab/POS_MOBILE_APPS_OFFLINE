@@ -20,82 +20,7 @@ class DatabaseHelper {
   Future<Database> get database async {
     if (_database != null) return _database!;
     _database = await _initDb();
-    // FIX: safely add session_id column if it doesn't exist yet.
-    await _ensureNameColumn(_database!);
-    await _ensureSessionIdColumn(_database!);
-    await _ensureOdooOrderIdColumn(_database!);
-    await _ensureOrderLinesColumns(_database!);
-    await _ensureCompanyNameColumn(_database!);
     return _database!;
-  }
-
-  // Adds name column to orders table if missing.
-  Future<void> _ensureNameColumn(Database db) async {
-    try {
-      await db.execute(
-        'ALTER TABLE orders ADD COLUMN name TEXT DEFAULT ""',
-      );
-    } catch (_) {
-      // Column already exists — ignore error
-    }
-  }
-
-  // Adds session_id column to orders table if missing.
-  Future<void> _ensureSessionIdColumn(Database db) async {
-    try {
-      await db.execute(
-        'ALTER TABLE orders ADD COLUMN session_id INTEGER DEFAULT 0',
-      );
-    } catch (_) {
-      // Column already exists — ignore error
-    }
-  }
-
-  // Adds company_name column to orders table if missing.
-  Future<void> _ensureCompanyNameColumn(Database db) async {
-    try {
-      await db.execute(
-        'ALTER TABLE orders ADD COLUMN company_name TEXT DEFAULT ""',
-      );
-    } catch (_) {
-      // Column already exists — ignore error
-    }
-  }
-
-  // Adds odoo_order_id column to orders table if missing.
-  Future<void> _ensureOdooOrderIdColumn(Database db) async {
-    try {
-      await db.execute(
-        'ALTER TABLE orders ADD COLUMN odoo_order_id INTEGER DEFAULT 0',
-      );
-    } catch (_) {
-      // Column already exists — ignore error
-    }
-  }
-
-  // Adds missing columns to order_lines table if they don't exist yet.
-  Future<void> _ensureOrderLinesColumns(Database db) async {
-    final columns = [
-      'product_name TEXT DEFAULT ""',
-      'price_unit REAL DEFAULT 0.0',
-      'variant_attributes TEXT DEFAULT ""',
-      'price_subtotal REAL DEFAULT 0.0',
-      'price_subtotal_incl REAL DEFAULT 0.0',
-      'image TEXT DEFAULT ""',
-      'tax_rate REAL DEFAULT 18.0',
-      'session_id INTEGER DEFAULT 0',
-      'is_combo INTEGER DEFAULT 0',
-      'combo_parent_id INTEGER',
-      'combo_name TEXT DEFAULT ""',
-    ];
-
-    for (final col in columns) {
-      try {
-        await db.execute('ALTER TABLE order_lines ADD COLUMN $col');
-      } catch (_) {
-        // Column already exists — ignore error
-      }
-    }
   }
 
   // ─────────────────────────────────────────────────────────
@@ -220,7 +145,7 @@ class DatabaseHelper {
         customer_note TEXT DEFAULT '',
         is_combo INTEGER DEFAULT 0,
         combo_parent_id INTEGER,
-        combo_name TEXT,
+        combo_name TEXT DEFAULT '',
         created_at INTEGER,
         image TEXT,
         variant_attributes TEXT DEFAULT '',

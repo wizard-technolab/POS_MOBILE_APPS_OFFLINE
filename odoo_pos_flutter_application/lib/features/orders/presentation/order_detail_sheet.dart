@@ -221,8 +221,9 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
 
         final parentIsComboLine = _lineBool(parentLine['is_combo']);
         final rawParentComboParentId = parentLine['combo_parent_id'];
-        final parentComboParentId =
-            rawParentComboParentId is num ? rawParentComboParentId.toInt() : null;
+        final parentComboParentId = rawParentComboParentId is num
+            ? rawParentComboParentId.toInt()
+            : null;
 
         // Child combo lines also have is_combo=1. Do not treat them as parents.
         if (parentIsComboLine &&
@@ -231,7 +232,8 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
           continue;
         }
 
-        ProductModel? parentProduct = ProductCache.instance.get(parentProductId);
+        ProductModel? parentProduct =
+            ProductCache.instance.get(parentProductId);
         final parentLineComboName =
             (parentLine['combo_name'] as String? ?? '').trim();
 
@@ -276,13 +278,12 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
               (childLine['combo_name'] as String? ?? '').trim();
           final note = (childLine['note'] as String? ?? '').trim();
 
-          final belongsToThisCombo =
-              (isComboLine &&
-                      (comboParentId == parentProductId ||
-                          comboParentId == comboProduct.id)) ||
-                  (childComboName.isNotEmpty && childComboName == comboName) ||
-                  note == '[Combo: $comboName]' ||
-                  note == '[Combo: ${parentProduct.name}]';
+          final belongsToThisCombo = (isComboLine &&
+                  (comboParentId == parentProductId ||
+                      comboParentId == comboProduct.id)) ||
+              (childComboName.isNotEmpty && childComboName == comboName) ||
+              note == '[Combo: $comboName]' ||
+              note == '[Combo: ${parentProduct.name}]';
 
           if (!belongsToThisCombo) continue;
 
@@ -339,9 +340,10 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
       for (var i = 0; i < _lines.length; i++) {
         if (restoredComboLineIndexes.contains(i)) continue;
         final line = _lines[i];
-        final comboName = ((line['combo_name'] as String? ?? '').trim().isNotEmpty)
-            ? (line['combo_name'] as String).trim()
-            : _comboNameFromNote(line['note']);
+        final comboName =
+            ((line['combo_name'] as String? ?? '').trim().isNotEmpty)
+                ? (line['combo_name'] as String).trim()
+                : _comboNameFromNote(line['note']);
         if (comboName.isNotEmpty) fallbackComboNames.add(comboName);
       }
 
@@ -365,12 +367,15 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
           if (restoredComboLineIndexes.contains(i)) continue;
           final line = _lines[i];
           final productId = (line['product_id'] as num?)?.toInt() ?? 0;
-          final lineComboName = ((line['combo_name'] as String? ?? '').trim().isNotEmpty)
-              ? (line['combo_name'] as String).trim()
-              : _comboNameFromNote(line['note']);
+          final lineComboName =
+              ((line['combo_name'] as String? ?? '').trim().isNotEmpty)
+                  ? (line['combo_name'] as String).trim()
+                  : _comboNameFromNote(line['note']);
 
-          final template = productId > 0 ? ProductCache.instance.get(productId) : null;
-          if (template != null && template.isCombo &&
+          final template =
+              productId > 0 ? ProductCache.instance.get(productId) : null;
+          if (template != null &&
+              template.isCombo &&
               template.name.toLowerCase().trim() == lowerName) {
             qty = ((line['qty'] ?? line['quantity']) as num?)?.toInt() ?? qty;
             matchedIndexes.add(i);
@@ -382,7 +387,9 @@ class OrderDetailSheetState extends State<OrderDetailSheet> {
           for (final group in comboProduct.groups) {
             final match = group.choices.where((c) => c.productId == productId);
             if (match.isNotEmpty) {
-              selected.putIfAbsent(group.groupId, () => <ComboChoice>[]).add(match.first);
+              selected
+                  .putIfAbsent(group.groupId, () => <ComboChoice>[])
+                  .add(match.first);
               qty = ((line['qty'] ?? line['quantity']) as num?)?.toInt() ?? qty;
               matchedIndexes.add(i);
               break;

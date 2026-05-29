@@ -24,6 +24,13 @@ class DeltaSyncManager {
   final OrderRepository _orderRepo = OrderRepository();
   final CustomerRepository _customerRepo = CustomerRepository();
 
+  // Upload throttling: prevents one sync cycle from hammering the backend
+  // when many offline records are pending. Remaining records stay queued for
+  // the next automatic/manual sync cycle.
+  static const int _orderUploadBatchLimit = 20;
+  static const int _customerUploadBatchLimit = 30;
+  static const Duration _uploadThrottleDelay = Duration(milliseconds: 400);
+
   // Guard to prevent multiple concurrent sync operations
   bool _isSyncing = false;
 
@@ -282,7 +289,9 @@ class DeltaSyncManager {
         return;
       }
 
-      debugPrint('📤 Uploading ${unsyncedOrders.length} unsynced orders…');
+      final orderBatch = unsyncedOrders.take(_orderUploadBatchLimit).toList();
+      debugPrint(
+          '📤 Uploading ${orderBatch.length}/${unsyncedOrders.length} unsynced orders this cycle…');
 
       final baseUrl = await AppConfig.getServerUrl();
       final token = await AppConfig.getApiToken();
@@ -293,7 +302,7 @@ class DeltaSyncManager {
       }
 
       int uploadCount = 0;
-      for (final order in unsyncedOrders) {
+      for (final order in orderBatch) {
         final orderId = order['id'] as int;
         final attempts = (order['sync_attempts'] as int?) ?? 0;
 
@@ -312,13 +321,24 @@ class DeltaSyncManager {
           final orderSessionId = order['session_id'] as int? ?? sessionId;
           final odooId = (order['odoo_order_id'] as num?)?.toInt() ?? 0;
 
+          // Server-synced draft orders downloaded from /api/orders/pending may
+          // not have device_code stored in SQLite. If such an order is restored
+          // and paid while offline, the upload later calls /api/order/<id>/pay.
+          // The backend requires device_code, so fall back to the configured
+          // device code instead of sending null/empty and getting HTTP 400.
+          final savedDeviceCode =
+              (order['device_code'] as String?)?.trim() ?? '';
+          final effectiveDeviceCode = savedDeviceCode.isNotEmpty
+              ? savedDeviceCode
+              : await AppConfig.getDeviceCode();
+
           // If order exists on Odoo (restored draft), use /pay endpoint to update items & pay
           final path = (odooId > 0) ? '/api/order/$odooId/pay' : '/api/order';
 
           final payload = {
             'name': order['name'], // ✅ Send custom device-generated name
             'external_id': order['external_id'],
-            'device_code': order['device_code'],
+            'device_code': effectiveDeviceCode,
             'customer_id': (order['customer_id'] as int?) != null &&
                     (order['customer_id'] as int) > 0
                 ? order['customer_id']
@@ -361,13 +381,15 @@ class DeltaSyncManager {
               orderId,
               paymentMethod: pMethod,
               odooOrderId: odooId,
+              sessionId: orderSessionId,
             );
             uploadCount++;
             debugPrint('✅ Order $orderId uploaded');
+            await Future.delayed(_uploadThrottleDelay);
           } else {
             await _orderRepo.incrementSyncAttempts(orderId);
             debugPrint(
-                '⚠️ Order $orderId upload failed: ${response.statusCode}');
+                '⚠️ Order $orderId upload failed: ${response.statusCode} ${response.body}');
           }
         } catch (e) {
           await _orderRepo.incrementSyncAttempts(orderId);
@@ -393,7 +415,9 @@ class DeltaSyncManager {
         return;
       }
 
-      debugPrint('📤 Uploading ${unsyncedDrafts.length} unsynced drafts…');
+      final draftBatch = unsyncedDrafts.take(_orderUploadBatchLimit).toList();
+      debugPrint(
+          '📤 Uploading ${draftBatch.length}/${unsyncedDrafts.length} unsynced drafts this cycle…');
 
       final baseUrl = await AppConfig.getServerUrl();
       final token = await AppConfig.getApiToken();
@@ -404,7 +428,7 @@ class DeltaSyncManager {
       }
 
       int uploadCount = 0;
-      for (final order in unsyncedDrafts) {
+      for (final order in draftBatch) {
         final orderId = order['id'] as int;
         final attempts = (order['sync_attempts'] as int?) ?? 0;
 
@@ -416,6 +440,11 @@ class DeltaSyncManager {
         try {
           final orderLines = await _orderRepo.getOrderLines(orderId);
           final orderSessionId = order['session_id'] as int? ?? sessionId;
+          final savedDeviceCode =
+              (order['device_code'] as String?)?.trim() ?? '';
+          final effectiveDeviceCode = savedDeviceCode.isNotEmpty
+              ? savedDeviceCode
+              : await AppConfig.getDeviceCode();
 
           final odooId = order['odoo_order_id'] as int? ?? 0;
           final externalId = order['external_id'] as String? ?? '';
@@ -428,7 +457,7 @@ class DeltaSyncManager {
 
           final payload = {
             if (hasExternalId) 'external_id': externalId,
-            'device_code': order['device_code'],
+            'device_code': effectiveDeviceCode,
             'session_id': orderSessionId,
             'customer_id': (order['customer_id'] as int?) != null &&
                     (order['customer_id'] as int) > 0
@@ -465,9 +494,11 @@ class DeltaSyncManager {
             final data = jsonDecode(response.body);
             final odooId = data['data']?['order_id'] as int? ?? 0;
             if (odooId > 0) {
-              await _orderRepo.saveDraftOdooOrderId(orderId, odooId);
+              await _orderRepo.saveDraftOdooOrderId(orderId, odooId,
+                  sessionId: orderSessionId);
               uploadCount++;
               debugPrint('✅ Draft order $orderId synced to Odoo');
+              await Future.delayed(_uploadThrottleDelay);
             }
           } else {
             await _orderRepo.incrementSyncAttempts(orderId);
@@ -498,7 +529,9 @@ class DeltaSyncManager {
         return;
       }
 
-      debugPrint('📤 Uploading ${cancelledOrders.length} cancelled orders…');
+      final cancelBatch = cancelledOrders.take(_orderUploadBatchLimit).toList();
+      debugPrint(
+          '📤 Uploading ${cancelBatch.length}/${cancelledOrders.length} cancelled orders this cycle…');
 
       final baseUrl = await AppConfig.getServerUrl();
       final token = await AppConfig.getApiToken();
@@ -509,7 +542,7 @@ class DeltaSyncManager {
       }
 
       int uploadCount = 0;
-      for (final order in cancelledOrders) {
+      for (final order in cancelBatch) {
         final orderId = order['id'] as int;
         final attempts = (order['sync_attempts'] as int?) ?? 0;
 
@@ -521,13 +554,18 @@ class DeltaSyncManager {
 
         try {
           final orderSessionId = order['session_id'] as int? ?? sessionId;
+          final savedDeviceCode =
+              (order['device_code'] as String?)?.trim() ?? '';
+          final effectiveDeviceCode = savedDeviceCode.isNotEmpty
+              ? savedDeviceCode
+              : await AppConfig.getDeviceCode();
 
           // Build cancel payload — lines are optional but helpful for Odoo records
           final orderLines = await _orderRepo.getOrderLines(orderId);
           final payload = {
             'name': order['name'], // ✅ Send custom device-generated name
             'external_id': order['external_id'],
-            'device_code': order['device_code'],
+            'device_code': effectiveDeviceCode,
             'session_id': orderSessionId,
             if ((order['customer_id'] as int?) != null &&
                 (order['customer_id'] as int) > 0)
@@ -558,9 +596,12 @@ class DeltaSyncManager {
             await _orderRepo.markOrderAsSynced(
               orderId,
               paymentMethod: order['payment_method'] as String? ?? 'Cash',
+              sessionId: orderSessionId,
+              status: 'cancel',
             );
             uploadCount++;
             debugPrint('✅ Cancelled order $orderId synced to Odoo');
+            await Future.delayed(_uploadThrottleDelay);
           } else {
             await _orderRepo.incrementSyncAttempts(orderId);
             debugPrint(
@@ -1047,7 +1088,9 @@ class DeltaSyncManager {
         return;
       }
 
-      debugPrint('📤 Uploading ${unsynced.length} unsynced customers...');
+      final customerBatch = unsynced.take(_customerUploadBatchLimit).toList();
+      debugPrint(
+          '📤 Uploading ${customerBatch.length}/${unsynced.length} unsynced customers this cycle...');
       final baseUrl = await AppConfig.getServerUrl();
       final token = await AppConfig.getApiToken();
 
@@ -1056,7 +1099,7 @@ class DeltaSyncManager {
         return;
       }
 
-      for (final customer in unsynced) {
+      for (final customer in customerBatch) {
         final localId = customer['id'] as int;
         final isNew = localId < 0;
         final attempts = (customer['sync_attempts'] as int?) ?? 0;
@@ -1101,6 +1144,7 @@ class DeltaSyncManager {
               } else {
                 await _customerRepo.markCustomerAsSynced(localId);
               }
+              await Future.delayed(_uploadThrottleDelay);
             }
           } else if (statusCode == 404 && !isNew) {
             // CONFLICT: record deleted on server. Remove locally.

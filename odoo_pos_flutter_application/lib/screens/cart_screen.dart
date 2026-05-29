@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart'; // add uuid to pubspec.yaml
 import '../services/cart_service.dart';
 import '../services/app_config.dart';
+import '../services/db_helper.dart';
 import '../data/repositories/order_repository.dart';
 import '../models/combo_model.dart';
 import '../widgets/combo_selection_sheet.dart';
@@ -1994,7 +1995,8 @@ class _CartScreenState extends State<CartScreen> {
       final orderRepo = OrderRepository();
 
       // 1. Update the existing order row to 'cancel' in local SQLite
-      await orderRepo.updateOrderStatus(editingLocalId, 'cancel', synced: 0);
+      await orderRepo.updateOrderStatus(editingLocalId, 'cancel',
+          synced: 0, sessionId: sessionId);
       debugPrint('✅ Marked pending order $editingLocalId as cancelled (local)');
 
       // 2. Try to cancel on Odoo so the server record matches.
@@ -2014,7 +2016,8 @@ class _CartScreenState extends State<CartScreen> {
                   'Content-Type': 'application/json',
                   'Authorization': 'Bearer $token',
                 },
-                body: jsonEncode({'device_code': deviceCode}),
+                body: jsonEncode(
+                    {'device_code': deviceCode, 'session_id': sessionId}),
               )
               .timeout(const Duration(seconds: 10));
           final data = jsonDecode(response.body);
@@ -2027,7 +2030,26 @@ class _CartScreenState extends State<CartScreen> {
         if (!cancelledOnOdoo &&
             editingExternalId != null &&
             editingExternalId.isNotEmpty) {
+          String? editingOrderName;
+          try {
+            final db = await DatabaseHelper().database;
+            final rows = await db.query(
+              'orders',
+              columns: ['name'],
+              where: 'id = ? AND session_id = ?',
+              whereArgs: [editingLocalId, sessionId],
+              limit: 1,
+            );
+            if (rows.isNotEmpty) {
+              editingOrderName = rows.first['name'] as String?;
+            }
+          } catch (_) {
+            editingOrderName = null;
+          }
+
           final cancelPayload = {
+            if (editingOrderName != null && editingOrderName!.isNotEmpty)
+              'name': editingOrderName,
             'external_id': editingExternalId,
             'device_code': deviceCode,
             'session_id': sessionId,
@@ -2064,7 +2086,7 @@ class _CartScreenState extends State<CartScreen> {
         // Mark as synced so sync_manager does not retry
         if (cancelledOnOdoo) {
           await orderRepo.updateOrderStatus(editingLocalId, 'cancel',
-              synced: 1);
+              synced: 1, sessionId: sessionId);
         }
       } catch (e) {
         // Offline or error — local row already marked cancel with synced=0,
@@ -2089,11 +2111,16 @@ class _CartScreenState extends State<CartScreen> {
     }
     // ── END EDITING PENDING ORDER ─────────────────────────────────────────────
 
-    // Generate a unique ID for this cancelled order record
+    // Generate a unique ID and visible sequence name for this cancelled order.
+    // Cancelled orders must consume/display a real order number both online and
+    // offline, matching Odoo POS behaviour.
     final externalId = const Uuid().v4();
+    final cancelName =
+        await OrderRepository().generateNextOrderName(sessionId, deviceCode);
 
     // Build cancel payload — same structure as a normal order
     final payload = {
+      'name': cancelName,
       'external_id': externalId,
       'device_code': deviceCode,
       'session_id': sessionId,
@@ -2139,14 +2166,16 @@ class _CartScreenState extends State<CartScreen> {
         // Server returned error — save locally so no data is lost
         debugPrint('⚠️ Odoo cancel returned error: ${data['message']}');
         await _saveCancelledOrderOffline(
-            externalId, deviceCode, sessionId, cart);
+            externalId, deviceCode, sessionId, cart,
+            name: cancelName);
       }
     } catch (e) {
       // ── Offline fallback ──────────────────────────────────────────
       // Server unreachable — save cancelled order locally.
       // It will appear in orders screen as cancelled.
       debugPrint('⚠️ Cancel API unreachable, saving locally: $e');
-      await _saveCancelledOrderOffline(externalId, deviceCode, sessionId, cart);
+      await _saveCancelledOrderOffline(externalId, deviceCode, sessionId, cart,
+          name: cancelName);
     }
 
     // Always clear the cart regardless of online/offline result
@@ -2172,8 +2201,9 @@ class _CartScreenState extends State<CartScreen> {
     String externalId,
     String deviceCode,
     int sessionId,
-    CartService cart,
-  ) async {
+    CartService cart, {
+    String? name,
+  }) async {
     try {
       final orderRepo = OrderRepository();
       final customerId = cart.customerNotifier.value?.id ?? 0;
@@ -2216,6 +2246,7 @@ class _CartScreenState extends State<CartScreen> {
         total: cart.total,
         taxAmount: cart.taxAmount,
         status: 'cancel',
+        fixedName: name,
         // companyName: companyName,
       );
 

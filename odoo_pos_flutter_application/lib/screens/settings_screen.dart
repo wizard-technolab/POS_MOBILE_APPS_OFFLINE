@@ -389,7 +389,8 @@ class _SettingsScreenState extends State<SettingsScreen>
                       'tax_rate': (line['tax_rate'] as num?)?.toDouble() ?? 0.0,
                       'note': line['note'] as String? ?? '',
                       'customer_note': line['customer_note'] as String? ?? '',
-                      'is_combo': line['is_combo'] == true || line['is_combo'] == 1,
+                      'is_combo':
+                          line['is_combo'] == true || line['is_combo'] == 1,
                       'combo_parent_id': line['combo_parent_id'],
                       'combo_name': line['combo_name'] as String? ?? '',
                     })
