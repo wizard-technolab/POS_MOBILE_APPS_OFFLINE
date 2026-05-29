@@ -833,6 +833,7 @@ class PosApiController(http.Controller):
                 'customer_note':   order.customer_note or '',
                 'session_id':      order.session_id.id if order.session_id else False,
                 'session_name':    order.session_id.name if order.session_id else '',
+                'device_code':     order.device_code.device_code if order.device_code else '',
 
                 # Full product lines — no extra API call needed
                 'lines':           lines_by_order.get(order.id, []),
@@ -904,18 +905,32 @@ class PosApiController(http.Controller):
             return self._json_response(
                 status='error', message='Missing field: external_id', code=400)
 
-        # ── Step 4: Check if this order already exists ────────
-        # If the cashier taps Cancel on an order that was already synced
-        # (e.g., saved offline and then synced), we cancel the existing record.
+        # ── Step 4: Resolve the selected POS session first ─────
+        # All cancel matching is session-scoped. The same external_id/device
+        # must never cancel an order from another POS session.
+        session_id = payload.get('session_id')
+        session, session_err = self._resolve_session(session_id)
+        if session_err:
+            res = {'status': 'error', 'message': session_err, 'code': 400}
+            self._log(payload, res, 'error')
+            return self._json_response(
+                status='error', message=session_err, code=400)
+
         existing = request.env['pos.order'].sudo().search([
             ('external_pos_id', '=', payload['external_id']),
             ('device_code',     '=', device.id),
+            ('session_id',      '=', session.id),
         ], limit=1)
 
         if existing:
             # Order already in Odoo — cancel it if not already cancelled
-            if existing.state != 'cancel':
-                existing.sudo().write({'state': 'cancel'})
+            vals = {'state': 'cancel'}
+            # If Flutter generated a device-side sequence while offline, keep it
+            # on the existing Odoo order instead of leaving/displaying '/'.
+            if payload.get('name') and existing.name in (False, '/'):
+                vals['name'] = payload.get('name')
+            if existing.state != 'cancel' or vals.get('name'):
+                existing.sudo().write(vals)
             res = {
                 'status': 'success',
                 'data':   {'order_id': existing.id},
@@ -928,16 +943,6 @@ class PosApiController(http.Controller):
                 data={'order_id': existing.id},
                 message='Order cancelled.',
                 code=200)
-
-        # ── Step 5: Resolve the POS session ──────────────────
-        # We need a session to create the cancelled order record.
-        session_id = payload.get('session_id')
-        session, session_err = self._resolve_session(session_id)
-        if session_err:
-            res = {'status': 'error', 'message': session_err, 'code': 400}
-            self._log(payload, res, 'error')
-            return self._json_response(
-                status='error', message=session_err, code=400)
 
         pos_config = session.config_id
 
@@ -986,7 +991,7 @@ class PosApiController(http.Controller):
         # then immediately write state='cancel'.
         # This mirrors the native Odoo POS cancel behaviour — the order
         # appears in the order list as cancelled, not silently deleted.
-        order = request.env['pos.order'].sudo().create({
+        create_vals = {
             'external_pos_id': payload['external_id'],
             'device_code':     device.id,
             'partner_id':      payload.get('customer_id'),
@@ -1001,9 +1006,16 @@ class PosApiController(http.Controller):
 
             # Save order-level customer note for cancelled orders too
             'customer_note':   payload.get('customer_note', '') or '',
-        })
+        }
+        # Odoo may default cancelled draft-style orders to name='/' until paid.
+        # For API-created cancelled orders we want the POS sequence visible, so
+        # accept the device-generated name sent by Flutter/offline sync.
+        if payload.get('name'):
+            create_vals['name'] = payload.get('name')
 
-        # Set state to cancel after creation
+        order = request.env['pos.order'].sudo().create(create_vals)
+
+        # Set state to cancel after creation while preserving the assigned name.
         order.sudo().write({'state': 'cancel'})
 
         # ── Step 8: Return success ────────────────────────────
@@ -1190,7 +1202,8 @@ class PosApiController(http.Controller):
     #
     # Expected JSON body:
     # {
-    #   "device_code": "DEVICE-01"   ← REQUIRED
+    #   "device_code": "DEVICE-01",  ← REQUIRED
+    #   "session_id": 5               ← REQUIRED; selected POS session
     # }
     #
     # Response:
@@ -1235,7 +1248,18 @@ class PosApiController(http.Controller):
             return self._json_response(
                 status='error', message=res['message'], code=404)
 
-        # ── Step 4: Cancel the order if not already cancelled/paid ───────────
+        # ── Step 4: Enforce selected-session isolation ─────────────────────
+        payload_session_id = int(payload.get('session_id') or 0)
+        if not payload_session_id:
+            res = {'status': 'error', 'message': 'Missing field: session_id', 'code': 400}
+            self._log(payload, res, 'error')
+            return self._json_response(status='error', message=res['message'], code=400)
+        if order.session_id.id != payload_session_id:
+            res = {'status': 'error', 'message': 'Order does not belong to the selected POS session.', 'code': 409}
+            self._log(payload, res, 'error')
+            return self._json_response(status='error', message=res['message'], code=409)
+
+        # ── Step 5: Cancel the order if not already cancelled/paid ───────────
         # Already cancelled → return success (idempotent)
         # Already paid → return error (cannot cancel a paid order)
         if order.state == 'cancel':
