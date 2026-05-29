@@ -202,6 +202,26 @@ class ComboProductAPI(http.Controller):
                             elif 'combo_price' in line._fields:
                                 extra_price = line.combo_price
 
+                            qty_available = 0.0
+                            is_storable = True
+                            try:
+                                qty_available = float(combo_item.qty_available or 0)
+                                if 'is_storable' in combo_item._fields:
+                                    is_storable = bool(combo_item.is_storable)
+                                elif combo_item.product_tmpl_id and 'is_storable' in combo_item.product_tmpl_id._fields:
+                                    is_storable = bool(combo_item.product_tmpl_id.is_storable)
+                                else:
+                                    product_type = (
+                                        getattr(combo_item, 'type', '')
+                                        or getattr(combo_item, 'detailed_type', '')
+                                        or getattr(combo_item.product_tmpl_id, 'type', '')
+                                        or getattr(combo_item.product_tmpl_id, 'detailed_type', '')
+                                    )
+                                    is_storable = product_type in ('product', 'consu')
+                            except Exception:
+                                qty_available = 0.0
+                                is_storable = True
+
                             combinations.append({
                                 'combo_id': combo.id,
                                 'combo_name': combo.name,
@@ -209,7 +229,9 @@ class ComboProductAPI(http.Controller):
                                 'product_name': combo_item.name,
                                 'qty': qty,
                                 'price': price,
-                                'extra_price': extra_price
+                                'extra_price': extra_price,
+                                'qty_available': qty_available,
+                                'is_storable': is_storable
                             })
 
             # Extract main product price

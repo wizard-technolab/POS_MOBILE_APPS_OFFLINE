@@ -766,6 +766,20 @@ class PosApiController(http.Controller):
                 if order_id_val not in lines_by_order:
                     lines_by_order[order_id_val] = []
 
+                note_text = line.note or ''
+                combo_note_name = ''
+                if note_text.strip().startswith('[Combo:') and note_text.strip().endswith(']'):
+                    combo_note_name = note_text.strip()[len('[Combo:'):-1].strip()
+                product_type = ''
+                try:
+                    product_type = (getattr(line.product_id.product_tmpl_id, 'type', '')
+                                    or getattr(line.product_id.product_tmpl_id, 'detailed_type', '')
+                                    or getattr(line.product_id, 'type', '')
+                                    or getattr(line.product_id, 'detailed_type', ''))
+                except Exception:
+                    product_type = ''
+                is_combo_parent = product_type == 'combo'
+
                 lines_by_order[order_id_val].append({
                     'id':                  line.id,
                     'product_id':          line.product_id.id,
@@ -777,6 +791,9 @@ class PosApiController(http.Controller):
                     'price_subtotal_incl': line.price_subtotal_incl,
                     'note':                line.note or '',
                     'customer_note':       line.customer_note or '',
+                    'is_combo':            bool(is_combo_parent or combo_note_name),
+                    'combo_parent_id':     None,
+                    'combo_name':          (line.product_id.name or '') if is_combo_parent else combo_note_name,
                 })
 
         # ── Build response ────────────────────────────────────────────────────
@@ -1039,6 +1056,36 @@ class PosApiController(http.Controller):
                 code=403)
 
         lines = []
+
+        def _is_combo_product(product):
+            """Return True when the POS line product is a combo product."""
+            try:
+                tmpl = product.product_tmpl_id
+                product_type = (
+                    getattr(tmpl, 'type', '')
+                    or getattr(tmpl, 'detailed_type', '')
+                    or getattr(product, 'type', '')
+                    or getattr(product, 'detailed_type', '')
+                )
+                return product_type == 'combo'
+            except Exception:
+                return False
+
+        def _combo_name_from_note(note):
+            """Extract combo name from notes like '[Combo: Meal]'."""
+            note = (note or '').strip()
+            if note.startswith('[Combo:') and note.endswith(']'):
+                return note[len('[Combo:'):-1].strip()
+            return ''
+
+        # Build a quick index of combo parent lines by combo/product name.
+        # Odoo POS order lines do not store our mobile-only combo metadata, so
+        # we reconstruct it while returning lines back to Flutter.
+        combo_parent_by_name = {}
+        for parent in order.lines:
+            if _is_combo_product(parent.product_id):
+                combo_parent_by_name[(parent.product_id.name or '').strip()] = parent.product_id.id
+
         for line in order.lines:
             # Get product image — same logic as _get_product_image_base64() in product_api.py.
             # Odoo stores image_1920 as base64-encoded bytes, NOT raw binary.
@@ -1075,6 +1122,17 @@ class PosApiController(http.Controller):
             except Exception:
                 variant_attributes = []
 
+            combo_note_name = _combo_name_from_note(line.note)
+            is_combo_parent = _is_combo_product(product)
+            is_combo_child = bool(combo_note_name)
+            combo_parent_id = None
+            combo_name = ''
+            if is_combo_parent:
+                combo_name = product.name or ''
+            elif is_combo_child:
+                combo_name = combo_note_name
+                combo_parent_id = combo_parent_by_name.get(combo_note_name)
+
             lines.append({
                 'id':                  line.id,
 
@@ -1101,6 +1159,13 @@ class PosApiController(http.Controller):
                 # detail item popup. Same format as /api/products so ProductImage widget works.
                 # None if product has no image set in Odoo.
                 'image': image_b64,
+
+                # Combo metadata reconstructed from the Odoo line/product.
+                # Flutter needs these fields to restore the whole combo as one
+                # ComboCartItem instead of adding each choice separately.
+                'is_combo':       bool(is_combo_parent or is_combo_child),
+                'combo_parent_id': combo_parent_id,
+                'combo_name':      combo_name,
 
                 # Variant attribute pairs for products with multiple variants.
                 # Flutter order history detail sheet uses this to show chips like
@@ -1303,7 +1368,11 @@ class PosApiController(http.Controller):
             amount_untaxed += subtotal
             amount_tax     += tax_amt
 
-            order_lines_data.append((0, 0, {
+            is_combo        = line.get('is_combo', False)
+            combo_parent_id = line.get('combo_parent_id')
+            combo_name      = line.get('combo_name', '') or ''
+
+            order_line_vals = {
                 'product_id':          product.id,
                 'qty':                 qty,
                 'price_unit':          price,
@@ -1311,7 +1380,15 @@ class PosApiController(http.Controller):
                 'price_subtotal_incl': subtotal_incl,
                 'note':                line.get('note', '') or '',
                 'customer_note':       line.get('customer_note', '') or '',
-            }))
+            }
+
+            # Persist combo child relation in Odoo's line note. Mobile-only
+            # fields are not stored on pos.order.line, so /api/order/<id>/lines
+            # reconstructs combo grouping from this note when restoring cart.
+            if is_combo and combo_parent_id is not None:
+                order_line_vals['note'] = f'[Combo: {combo_name}]' if combo_name else '[Combo item]'
+
+            order_lines_data.append((0, 0, order_line_vals))
 
         amount_total = round(amount_untaxed + amount_tax, 2)
 
@@ -1518,7 +1595,11 @@ class PosApiController(http.Controller):
             amount_untaxed += subtotal
             amount_tax     += tax_amt
 
-            order_lines_data.append((0, 0, {
+            is_combo        = line.get('is_combo', False)
+            combo_parent_id = line.get('combo_parent_id')
+            combo_name      = line.get('combo_name', '') or ''
+
+            order_line_vals = {
                 'product_id':          product.id,
                 'qty':                 qty,
                 'price_unit':          price,
@@ -1526,7 +1607,15 @@ class PosApiController(http.Controller):
                 'price_subtotal_incl': subtotal_incl,
                 'note':                line.get('note', '') or '',
                 'customer_note':       line.get('customer_note', '') or '',
-            }))
+            }
+
+            # Persist combo child relation in Odoo's line note. Mobile-only
+            # fields are not stored on pos.order.line, so /api/order/<id>/lines
+            # reconstructs combo grouping from this note when restoring cart.
+            if is_combo and combo_parent_id is not None:
+                order_line_vals['note'] = f'[Combo: {combo_name}]' if combo_name else '[Combo item]'
+
+            order_lines_data.append((0, 0, order_line_vals))
 
         # Compute totals from lines (no payment yet — amount_paid = 0)
         amount_total = round(amount_untaxed + amount_tax, 2)

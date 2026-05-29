@@ -132,19 +132,38 @@ class ProductAPIController(http.Controller):
                 elif hasattr(line, 'extra_price') and line.extra_price:
                     extra = float(line.extra_price)
 
-                # ✅ NEW: Get qty_available for each combo choice product
+                # Stock info belongs to the product.product assigned on the combo line,
+                # not to the combo product itself.
                 choice_qty = 0.0
+                choice_is_storable = True
                 try:
-                    # line.product_id is a product.product record
-                    choice_qty = float(line.product_id.qty_available or 0)
+                    combo_product = line.product_id
+                    choice_qty = float(combo_product.qty_available or 0)
+
+                    # In Odoo 18 this flag is usually available on the template.
+                    # Keep fallbacks so the API works across product.product/template shapes.
+                    if 'is_storable' in combo_product._fields:
+                        choice_is_storable = bool(combo_product.is_storable)
+                    elif combo_product.product_tmpl_id and 'is_storable' in combo_product.product_tmpl_id._fields:
+                        choice_is_storable = bool(combo_product.product_tmpl_id.is_storable)
+                    else:
+                        product_type = (
+                            getattr(combo_product, 'type', '')
+                            or getattr(combo_product, 'detailed_type', '')
+                            or getattr(combo_product.product_tmpl_id, 'type', '')
+                            or getattr(combo_product.product_tmpl_id, 'detailed_type', '')
+                        )
+                        choice_is_storable = product_type in ('product', 'consu')
                 except Exception:
                     choice_qty = 0.0
+                    choice_is_storable = True
 
                 choices.append({
                     'product_id':    line.product_id.id,
                     'product_name':  line.product_id.name or '',
                     'extra_price':   extra,
                     'qty_available': choice_qty,
+                    'is_storable':   choice_is_storable,
                 })
 
             # qty_min / qty_max live on pos.combo (the group level)
