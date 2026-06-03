@@ -32,7 +32,7 @@ class SecurityPolicy {
   /// your supported Android/iOS devices.
   static const bool blockCompromisedDevices = bool.fromEnvironment(
     'BLOCK_COMPROMISED_DEVICES',
-    defaultValue: false,
+    defaultValue: true,
   );
 }
 

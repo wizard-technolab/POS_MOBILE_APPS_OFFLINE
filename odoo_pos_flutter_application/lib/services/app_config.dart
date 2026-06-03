@@ -37,6 +37,46 @@ class AppConfig {
   static const _keySubscriptionEmail = 'subscription_email';
   static const _keySubscriptionLicenseToken = 'subscription_license_token';
   static const _keyFirstLaunchAfterInstall = 'first_launch_after_install';
+  static const _keyLastKnownTime = 'last_known_system_time';
+
+  // ── Memory Cache for Secure Strings ─────────────────
+  static final Map<String, String> _secureCache = {};
+  static bool _cacheInitialized = false;
+
+  /// Preloads all secure keys into memory in parallel.
+  /// This significantly speeds up app boot on Xiaomi/Android devices.
+  static Future<void> preloadSecureStorage() async {
+    if (_cacheInitialized) return;
+
+    final keys = [
+      _keyServerUrl,
+      _keyApiKey,
+      _keyDb,
+      _keyApiToken,
+      _keyApiEmail,
+      _keyUserProfileEmail,
+      _keyApiPassword,
+      _keyDeviceCode,
+      _keySubscriptionCode,
+      _keySubscriptionExpDate,
+      _keySubscriptionEmail,
+      _keySubscriptionLicenseToken
+    ];
+
+    // Perform reads in parallel. While Android Keystore access is often
+    // serialized, this is still faster than awaiting them one-by-one
+    // across different service calls.
+    final results =
+        await Future.wait(keys.map((k) => SecureStorageService.read(k)));
+
+    for (int i = 0; i < keys.length; i++) {
+      _secureCache[keys[i]] = results[i] ?? '';
+    }
+
+    _cacheInitialized = true;
+    debugPrint(
+        '⚡ Secure storage cache preloaded (${_secureCache.length} keys)');
+  }
 
   /// Shared in-flight token refresh.
   ///
@@ -45,14 +85,17 @@ class AppConfig {
   static Future<String>? _refreshingApiToken;
 
   static Future<String> _getSecureString(String key) async {
-    return await SecureStorageService.read(key) ?? '';
+    await preloadSecureStorage(); // Ensure cache is ready
+    return _secureCache[key] ?? '';
   }
 
   static Future<void> _saveSecureString(String key, String value) async {
+    _secureCache[key] = value;
     await SecureStorageService.write(key, value);
   }
 
   static Future<void> _removeSecureString(String key) async {
+    _secureCache.remove(key);
     await SecureStorageService.delete(key);
   }
 
@@ -428,9 +471,23 @@ class AppConfig {
       // Allow the check to continue - offline mode may not have loaded email yet
     }
 
+    final prefs = await SharedPreferences.getInstance();
+    final lastKnownTimeMs = prefs.getInt(_keyLastKnownTime) ?? 0;
+
     try {
       final expDate = DateTime.parse(expDateStr);
       final today = DateTime.now();
+      final todayMs = today.millisecondsSinceEpoch;
+
+      // Anti-tamper: Detect if system clock was rolled back
+      if (todayMs < lastKnownTimeMs) {
+        debugPrint(
+            '❌ isSubscriptionValid: Clock tampering detected (backdated).');
+        return false;
+      }
+
+      // Persist the latest seen time to prevent future rollbacks
+      await prefs.setInt(_keyLastKnownTime, todayMs);
 
       // Compare date only (ignore time)
       final expDateOnly = DateTime(expDate.year, expDate.month, expDate.day);
@@ -438,6 +495,17 @@ class AppConfig {
 
       // Valid if expiration is today or in the future
       final isValid = !expDateOnly.isBefore(todayOnly);
+
+      // Soft-expiry: allow a 3-day grace period for offline use
+      if (!isValid) {
+        final graceDate = expDateOnly.add(const Duration(minutes: 10));
+        if (!todayOnly.isAfter(graceDate)) {
+          debugPrint(
+              '⚠️ isSubscriptionValid: Expired but within grace period until $graceDate');
+          return true;
+        }
+      }
+
       if (isValid) {
         debugPrint(
             '✅ isSubscriptionValid: Subscription is VALID until $expDateStr');
@@ -493,6 +561,7 @@ class AppConfig {
   /// Clear auth tokens only (keep server_url, email, password, subscription)
   /// This allows re-login with saved credentials and offline subscription validation.
   static Future<void> clear() async {
+    _secureCache.remove(_keyApiToken);
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyUid);
     await _removeSecureString(_keyApiToken);

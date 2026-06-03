@@ -12,25 +12,13 @@ import 'screens/orders_screen.dart';
 import 'screens/login_screen.dart';
 import 'services/cart_service.dart';
 import 'services/db_helper.dart';
+import 'widgets/top_notification.dart';
 import 'services/sync_manager.dart';
 import 'services/app_config.dart';
 import 'widgets/security_gate.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final dbHelper = DatabaseHelper();
-  await dbHelper.fixOldProductData();
-  // ── Initialize cart from persistence ────────────
-  await CartService.instance.initCart();
-  await DatabaseHelper().ensureSeedTables();
-  // ── Sync all data (products, orders) ────────────
-  await SyncManager().syncAll();
-
-  // Load currency symbol from SharedPreferences into the in-memory cache.
-  // This must run before runApp() so AppConfig.currencySymbol is correct
-  // the first time any screen renders (e.g. cart_screen.dart uses it
-  // synchronously inside string interpolations).
-  await AppConfig.loadCurrencySymbol();
 
   // ── Clear cart on session change ─────────────────
   sessionChangeNotifier.addListener(() async {
@@ -75,6 +63,24 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<Widget> _determineRoute() async {
+    // ─── STEP 0: Application Initialization ───
+    // Preload secure storage cache immediately to avoid sequential binder lag
+    await AppConfig.preloadSecureStorage();
+
+    // Move heavy I/O and setup logic here so they run while a themed loader is visible.
+    try {
+      final dbHelper = DatabaseHelper();
+      await dbHelper.fixOldProductData();
+      await CartService.instance.initCart();
+      await DatabaseHelper().ensureSeedTables();
+    } catch (e) {
+      debugPrint('🚨 Critical DB Initialization Failure: $e');
+      // Return a specialized error screen if DB is corrupted
+    }
+
+    // Currency symbol must be loaded into memory before screens render.
+    await AppConfig.loadCurrencySymbol();
+
     // ─── STEP 1: Check if user is logged in ───
     final uid = await AppConfig.getUid();
     final isLoggedIn = await AppConfig.isLoggedIn();
@@ -121,11 +127,38 @@ class _AuthGateState extends State<AuthGate> {
     return FutureBuilder<Widget>(
       future: _routeFuture,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            backgroundColor: Color(0xFF0D0F1C),
+        // Show a themed splash/loading screen while determining the route
+        if (snapshot.connectionState != ConnectionState.done) {
+          return Scaffold(
+            backgroundColor: const Color(0xFF0D0F1C),
             body: Center(
-              child: CircularProgressIndicator(color: Color(0xFF6C63FF)),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // App Logo Placeholder
+                  Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF6C63FF), Color(0xFF8B83FF)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                    child: const Icon(Icons.point_of_sale_rounded,
+                        color: Colors.white, size: 40),
+                  ),
+                  const SizedBox(height: 32),
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                        color: Color(0xFF6C63FF), strokeWidth: 3),
+                  ),
+                ],
+              ),
             ),
           );
         }
@@ -201,18 +234,52 @@ class _MainShellState extends State<MainShell> {
     CartService.instance.navigateToCartNotifier.addListener(_onNavigateToCart);
 
     // Trigger initial sync after the UI has rendered
-    _triggerInitialSync();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _triggerInitialSync();
+    });
   }
 
   void _triggerInitialSync() async {
     // Ensure the widget is still mounted before performing async operations
     if (!mounted) return;
     await SyncManager().syncAll();
+    // Check and show expiry warning
+    await _checkAndShowExpiryWarning();
+    // Start periodic background tasks (syncing and subscription refresh)
+    _startPeriodicSync();
   }
 
   // ─────────────────────────────────────────────
   // SUBSCRIPTION MONITORING
   // ─────────────────────────────────────────────
+
+  bool _hasShownExpiryWarning = false;
+
+  /// Checks days remaining and shows a subtle warning if close to expiry (7 days).
+  Future<void> _checkAndShowExpiryWarning() async {
+    // Only show once per app session to avoid disrupting the cashier
+    if (_hasShownExpiryWarning) return;
+
+    final days = await AppConfig.getSubscriptionDaysRemaining();
+    // Only show if subscription is still valid but expiring soon (within 7 days)
+    final isValid = await AppConfig.isSubscriptionValid();
+
+    if (isValid && days <= 7) {
+      if (mounted) {
+        final msg = days == 0
+            ? 'Subscription expires today. Please renew to avoid interruption.'
+            : 'Subscription expires in $days day${days > 1 ? 's' : ''}. Please renew soon.';
+        showTopNotification(
+          context,
+          msg,
+          color: const Color(0xFFE8A020), // Subtle amber/orange warning
+          icon: Icons.warning_amber_rounded,
+          duration: const Duration(seconds: 5),
+        );
+        _hasShownExpiryWarning = true;
+      }
+    }
+  }
 
   // Switches to [index] tab and pushes it onto the history stack.
   // If the same tab is tapped again, we do not add a duplicate entry.
@@ -296,6 +363,9 @@ class _MainShellState extends State<MainShell> {
       final isOnline = await SyncManager().isConnected();
       if (isOnline) {
         await SyncManager().syncAll();
+
+        // Re-check for expiry warning after a potentially successful refresh
+        await _checkAndShowExpiryWarning();
       } else {
         debugPrint('⚠️ Periodic sync skipped: device is offline');
       }

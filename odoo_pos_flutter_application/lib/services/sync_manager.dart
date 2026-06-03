@@ -13,6 +13,13 @@ import 'db_helper.dart';
 import 'delta_sync_manager.dart';
 
 class SyncManager extends ChangeNotifier {
+  // Singleton pattern to ensure the _syncLock and state are shared
+  static final SyncManager _instance = SyncManager._internal();
+  factory SyncManager() => _instance;
+  SyncManager._internal() {
+    // Initialize any state here if needed
+  }
+
   // ── Repositories ──────────────────────────────────────
   final OrderRepository _orderRepo = OrderRepository();
 
@@ -193,6 +200,13 @@ class SyncManager extends ChangeNotifier {
           action: 'sync',
           status: 'started');
       await _syncSubscriptionDown();
+
+      // Check validity immediately after sync; if invalid, stop the full sync process.
+      if (!(await AppConfig.isSubscriptionValid())) {
+        _lastError = 'Subscription invalid or expired';
+        return;
+      }
+
       await _logSync(
           entityType: 'subscription',
           entityId: 0,
@@ -292,6 +306,10 @@ class SyncManager extends ChangeNotifier {
           await AppConfig.clearSubscription();
         }
       }
+
+      // Update the global notifier so the UI (MainShell) can react immediately
+      AppConfig.subscriptionValidNotifier.value =
+          await AppConfig.isSubscriptionValid();
     } catch (e) {
       debugPrint('⚠️ Subscription delta sync error: $e');
     }

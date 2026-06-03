@@ -8,7 +8,7 @@ class SubscriptionService {
   /// The static remote server that manages all global subscriptions.
   static const String _licenseServerUrl = String.fromEnvironment(
     'WT_LICENSE_SERVER_URL',
-    defaultValue: 'https://synopses-wreckage-babied.ngrok-free.dev',
+    defaultValue: 'http://warlock-subscription.odoo.com',
   );
 
   /// Do not commit subscription/HMAC secrets in source code.
@@ -106,14 +106,21 @@ class SubscriptionService {
         };
       }
     } on http.ClientException catch (e) {
+      if (kDebugMode) {
+        print('🚨 Subscription Connection Failed: ${e.message}');
+      }
       return {
         'status': 'error',
-        'message': 'Connection failed: ${e.message}',
+        'message':
+            'Subscription server unreachable. Please check your internet connection.',
       };
     } catch (e) {
+      if (kDebugMode) {
+        print('🚨 Subscription Error: $e');
+      }
       return {
         'status': 'error',
-        'message': 'Connection error: $e',
+        'message': 'A validation error occurred. Please try again later.',
       };
     }
   }
@@ -152,7 +159,13 @@ class SubscriptionService {
         'message': data['message'] ?? 'Subscription status check failed',
       };
     } catch (e) {
-      return {'status': 'error', 'message': 'Connection error: $e'};
+      if (kDebugMode) {
+        print('🚨 Subscription Status Sync Error: $e');
+      }
+      return {
+        'status': 'error',
+        'message': 'Could not sync subscription status.'
+      };
     }
   }
 
